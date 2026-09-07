@@ -17,6 +17,8 @@ const {
 } = require('@discordjs/voice');
 
 const YTDlpWrap = require('yt-dlp-wrap').default;
+const ffmpegPath = require('ffmpeg-static');
+const { spawn } = require('child_process');
 const path = require('path');
 
 // =====================================================
@@ -24,11 +26,12 @@ const path = require('path');
 // =====================================================
 
 const prefix = '!';
-
 const ytDlpPath = path.join(__dirname, 'yt-dlp');
 
 let ytDlp = null;
-let currentProcess = null;
+
+// Stores both yt-dlp and ffmpeg processes
+let currentProcesses = null;
 
 // =====================================================
 // CHECK TOKEN
@@ -36,11 +39,18 @@ let currentProcess = null;
 
 if (!process.env.TOKEN) {
     console.error('❌ TOKEN is missing!');
-    console.error('Please add TOKEN to Railway Variables.');
+    console.error('Add TOKEN to Railway Variables.');
     process.exit(1);
 }
 
 console.log('🔑 TOKEN found.');
+
+if (!ffmpegPath) {
+    console.error('❌ FFmpeg was not found.');
+    process.exit(1);
+}
+
+console.log('🎬 FFmpeg found.');
 
 // =====================================================
 // DISCORD CLIENT
@@ -61,40 +71,55 @@ const client = new Client({
 
 const player = createAudioPlayer();
 
+// =====================================================
+// STOP AUDIO PROCESSES
+// =====================================================
+
+function stopAudioProcesses() {
+
+    if (!currentProcesses) {
+        return;
+    }
+
+    try {
+        if (currentProcesses.ytDlp) {
+            currentProcesses.ytDlp.kill();
+        }
+    } catch (error) {
+        console.error('⚠️ Could not stop yt-dlp.');
+    }
+
+    try {
+        if (currentProcesses.ffmpeg) {
+            currentProcesses.ffmpeg.kill();
+        }
+    } catch (error) {
+        console.error('⚠️ Could not stop FFmpeg.');
+    }
+
+    currentProcesses = null;
+}
+
+// =====================================================
+// PLAYER ERROR
+// =====================================================
+
 player.on('error', error => {
 
-    console.error(
-        '❌ Audio player error:',
-        error
-    );
+    console.error('❌ Audio player error:', error);
 
-    if (currentProcess) {
-        try {
-            currentProcess.kill();
-        } catch (e) {
-            console.error(
-                '⚠️ Could not stop yt-dlp process.'
-            );
-        }
-
-        currentProcess = null;
-    }
+    stopAudioProcesses();
 });
+
+// =====================================================
+// PLAYER IDLE
+// =====================================================
 
 player.on(AudioPlayerStatus.Idle, () => {
 
     console.log('⏹️ Audio player is idle.');
 
-    if (currentProcess) {
-
-        try {
-            currentProcess.kill();
-        } catch (e) {
-            // Ignore cleanup error
-        }
-
-        currentProcess = null;
-    }
+    stopAudioProcesses();
 });
 
 // =====================================================
@@ -152,20 +177,26 @@ client.once('clientReady', () => {
 });
 
 // =====================================================
-// SEARCH YOUTUBE
+// SEARCH SOUNDCLOUD
 // =====================================================
 
-async function searchYouTube(query) {
+async function searchSoundCloud(query) {
 
     console.log(
-        '🔎 Searching YouTube:',
+        '🔎 Searching SoundCloud:',
         query
     );
+
+    if (!ytDlp) {
+        throw new Error(
+            'yt-dlp is not initialized.'
+        );
+    }
 
     try {
 
         const searchQuery =
-            'ytsearch1:' + query;
+            'scsearch1:' + query;
 
         const output =
             await ytDlp.execPromise([
@@ -202,12 +233,7 @@ async function searchYouTube(query) {
             const url =
                 song.webpage_url ||
                 song.original_url ||
-                (
-                    song.id
-                        ? 'https://www.youtube.com/watch?v=' +
-                          song.id
-                        : null
-                );
+                song.url;
 
             if (!url) {
                 return null;
@@ -228,17 +254,21 @@ async function searchYouTube(query) {
 
         if (result.id) {
 
-            return {
+            const url =
+                result.webpage_url ||
+                result.original_url ||
+                result.url;
 
+            if (!url) {
+                return null;
+            }
+
+            return {
                 title:
                     result.title ||
                     'Unknown Song',
 
-                url:
-                    result.webpage_url ||
-                    result.original_url ||
-                    'https://www.youtube.com/watch?v=' +
-                    result.id
+                url: url
             };
         }
 
@@ -247,7 +277,7 @@ async function searchYouTube(query) {
     } catch (error) {
 
         console.error(
-            '❌ YouTube search error:',
+            '❌ SoundCloud search error:',
             error
         );
 
@@ -277,54 +307,111 @@ function getAudioStream(url) {
         );
     }
 
-    const process =
+    // =================================================
+    // START YT-DLP
+    // =================================================
+
+    const ytProcess =
         ytDlp.exec([
             '-f',
-
-            'bestaudio[acodec=opus][ext=webm]/bestaudio[acodec=opus]/bestaudio',
+            'bestaudio/best',
 
             '--no-playlist',
 
             '--no-warnings',
 
-            '-o',
+            '--quiet',
 
+            '-o',
             '-',
 
             url
         ]);
 
     // =================================================
-    // PROCESS ERROR
+    // START FFMPEG
     // =================================================
 
-    process.on('error', error => {
+    const ffmpegProcess =
+        spawn(
+            ffmpegPath,
+            [
+                '-hide_banner',
+                '-loglevel',
+                'error',
 
-        console.error(
-            '❌ yt-dlp process error:'
+                '-i',
+                'pipe:0',
+
+                '-f',
+                's16le',
+
+                '-ar',
+                '48000',
+
+                '-ac',
+                '2',
+
+                'pipe:1'
+            ],
+            {
+                stdio: [
+                    'pipe',
+                    'pipe',
+                    'pipe'
+                ]
+            }
         );
 
-        console.error(error);
+    // =================================================
+    // CONNECT YT-DLP -> FFMPEG
+    // =================================================
+
+    if (!ytProcess.stdout) {
+
+        throw new Error(
+            'yt-dlp did not provide stdout.'
+        );
+    }
+
+    ytProcess.stdout.pipe(
+        ffmpegProcess.stdin
+    );
+
+    // =================================================
+    // YT-DLP ERROR
+    // =================================================
+
+    ytProcess.on('error', error => {
+
+        console.error(
+            '❌ yt-dlp process error:',
+            error
+        );
+
+        try {
+            ffmpegProcess.kill();
+        } catch (e) {}
     });
 
     // =================================================
-    // STDERR
+    // YT-DLP STDERR
     // =================================================
 
-    if (process.stderr) {
+    if (ytProcess.stderr) {
 
-        process.stderr.on(
+        ytProcess.stderr.on(
             'data',
             data => {
 
-                const errorText =
+                const text =
                     data.toString().trim();
 
-                if (errorText) {
+                if (text) {
 
                     console.error(
-                        '❌ yt-dlp:',
-                        errorText
+                        'yt-dlp:',
+                        text
                     );
                 }
             }
@@ -332,33 +419,92 @@ function getAudioStream(url) {
     }
 
     // =================================================
-    // PROCESS CLOSE
+    // YT-DLP CLOSE
     // =================================================
 
-    process.on(
+    ytProcess.on(
         'close',
         code => {
 
             console.log(
-                '🎵 yt-dlp process closed with code:',
+                '🎵 yt-dlp closed:',
                 code
             );
 
-            if (code !== 0) {
+            try {
+
+                if (
+                    !ffmpegProcess.killed &&
+                    code !== 0
+                ) {
+                    ffmpegProcess.kill();
+                }
+
+            } catch (e) {}
+        }
+    );
+
+    // =================================================
+    // FFMPEG ERROR
+    // =================================================
+
+    ffmpegProcess.on(
+        'error',
+        error => {
+
+            console.error(
+                '❌ FFmpeg error:',
+                error
+            );
+
+            try {
+                ytProcess.kill();
+            } catch (e) {}
+        }
+    );
+
+    // =================================================
+    // FFMPEG STDERR
+    // =================================================
+
+    ffmpegProcess.stderr.on(
+        'data',
+        data => {
+
+            const text =
+                data.toString().trim();
+
+            if (text) {
 
                 console.error(
-                    '❌ yt-dlp failed to download audio.'
-                );
-            } else {
-
-                console.log(
-                    '✅ yt-dlp audio process finished.'
+                    'FFmpeg:',
+                    text
                 );
             }
         }
     );
 
-    return process;
+    // =================================================
+    // FFMPEG CLOSE
+    // =================================================
+
+    ffmpegProcess.on(
+        'close',
+        code => {
+
+            console.log(
+                '🎬 FFmpeg closed:',
+                code
+            );
+        }
+    );
+
+    currentProcesses = {
+        ytDlp: ytProcess,
+        ffmpeg: ffmpegProcess
+    };
+
+    return ffmpegProcess;
 }
 
 // =====================================================
@@ -485,7 +631,8 @@ client.on(
                             message.guild.id,
 
                         adapterCreator:
-                            message.guild.voiceAdapterCreator
+                            message.guild
+                                .voiceAdapterCreator
                     });
 
                 try {
@@ -561,7 +708,7 @@ client.on(
                 }
 
                 // -------------------------------------------------
-                // SEARCHING MESSAGE
+                // SEARCHING
                 // -------------------------------------------------
 
                 const searchingMessage =
@@ -577,19 +724,10 @@ client.on(
 
                 player.stop();
 
-                if (currentProcess) {
-
-                    try {
-                        currentProcess.kill();
-                    } catch (e) {
-                        // Ignore
-                    }
-
-                    currentProcess = null;
-                }
+                stopAudioProcesses();
 
                 // -------------------------------------------------
-                // SEARCH SONG
+                // SEARCH
                 // -------------------------------------------------
 
                 let song = null;
@@ -597,7 +735,7 @@ client.on(
                 try {
 
                     song =
-                        await searchYouTube(
+                        await searchSoundCloud(
                             songName
                         );
 
@@ -609,7 +747,7 @@ client.on(
                     );
 
                     await searchingMessage.edit(
-                        '❌ YouTube search failed.'
+                        '❌ SoundCloud search failed.'
                     );
 
                     return;
@@ -662,7 +800,8 @@ client.on(
                                 message.guild.id,
 
                             adapterCreator:
-                                message.guild.voiceAdapterCreator
+                                message.guild
+                                    .voiceAdapterCreator
                         });
 
                     try {
@@ -690,6 +829,10 @@ client.on(
                     }
                 }
 
+                // -------------------------------------------------
+                // SUBSCRIBE PLAYER
+                // -------------------------------------------------
+
                 connection.subscribe(
                     player
                 );
@@ -700,30 +843,18 @@ client.on(
 
                 try {
 
-                    currentProcess =
+                    const ffmpegProcess =
                         getAudioStream(
                             song.url
                         );
 
-                    // -------------------------------------------------
-                    // CHECK PROCESS
-                    // -------------------------------------------------
-
-                    if (!currentProcess) {
-
-                        throw new Error(
-                            'yt-dlp process was not created.'
-                        );
-                    }
-
-                    // -------------------------------------------------
-                    // CHECK STDOUT
-                    // -------------------------------------------------
-
-                    if (!currentProcess.stdout) {
+                    if (
+                        !ffmpegProcess ||
+                        !ffmpegProcess.stdout
+                    ) {
 
                         throw new Error(
-                            'yt-dlp did not provide an audio stream.'
+                            'FFmpeg did not provide an audio stream.'
                         );
                     }
 
@@ -732,15 +863,15 @@ client.on(
                     );
 
                     // -------------------------------------------------
-                    // CREATE AUDIO RESOURCE
+                    // CREATE RAW AUDIO RESOURCE
                     // -------------------------------------------------
 
                     const resource =
                         createAudioResource(
-                            currentProcess.stdout,
+                            ffmpegProcess.stdout,
                             {
                                 inputType:
-                                    StreamType.WebmOpus
+                                    StreamType.Raw
                             }
                         );
 
@@ -763,20 +894,10 @@ client.on(
                         error
                     );
 
-                    if (currentProcess) {
-
-                        try {
-                            currentProcess.kill();
-                        } catch (e) {
-                            // Ignore
-                        }
-
-                        currentProcess = null;
-                    }
+                    stopAudioProcesses();
 
                     await searchingMessage.edit(
-                        '❌ Could not start audio.\n' +
-                        'Check the Railway logs for the yt-dlp error.'
+                        '❌ Could not start audio.'
                     );
 
                     return;
@@ -795,24 +916,15 @@ client.on(
                 return;
             }
 
-            // =================================================
+            // =====================================================
             // !STOP
-            // =================================================
+            // =====================================================
 
             if (command === 'stop') {
 
                 player.stop();
 
-                if (currentProcess) {
-
-                    try {
-                        currentProcess.kill();
-                    } catch (e) {
-                        // Ignore
-                    }
-
-                    currentProcess = null;
-                }
+                stopAudioProcesses();
 
                 await message.reply(
                     '⏹️ Music stopped!'
@@ -821,9 +933,9 @@ client.on(
                 return;
             }
 
-            // =================================================
+            // =====================================================
             // !LEAVE
-            // =================================================
+            // =====================================================
 
             if (command === 'leave') {
 
@@ -843,16 +955,7 @@ client.on(
 
                 player.stop();
 
-                if (currentProcess) {
-
-                    try {
-                        currentProcess.kill();
-                    } catch (e) {
-                        // Ignore
-                    }
-
-                    currentProcess = null;
-                }
+                stopAudioProcesses();
 
                 connection.destroy();
 
@@ -863,9 +966,9 @@ client.on(
                 return;
             }
 
-            // =================================================
+            // =====================================================
             // !HELP
-            // =================================================
+            // =====================================================
 
             if (command === 'help') {
 
@@ -873,17 +976,11 @@ client.on(
                     '**🎵 YURI BOT COMMANDS**\n\n' +
 
                     '`!hello` - Say hello\n' +
-
                     '`!ping` - Check bot status\n' +
-
                     '`!join` - Join your voice channel\n' +
-
                     '`!play <song>` - Play music\n' +
-
                     '`!stop` - Stop music\n' +
-
                     '`!leave` - Leave voice channel\n' +
-
                     '`!help` - Show commands'
                 );
 
