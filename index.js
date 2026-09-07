@@ -1,17 +1,35 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
+
+const {
+    Client,
+    GatewayIntentBits
+} = require('discord.js');
 
 const {
     joinVoiceChannel,
     createAudioPlayer,
     createAudioResource,
-    AudioPlayerStatus,
     VoiceConnectionStatus,
     entersState,
-    getVoiceConnection
+    getVoiceConnection,
+    StreamType
 } = require('@discordjs/voice');
 
-const play = require('@iamtraction/play-dl');
+const youtubedl = require('youtube-dl-exec');
+
+// =============================
+// CHECK TOKEN
+// =============================
+
+if (!process.env.TOKEN) {
+    console.error('❌ TOKEN is missing!');
+    console.error('Add TOKEN to Railway Variables.');
+    process.exit(1);
+}
+
+// =============================
+// DISCORD CLIENT
+// =============================
 
 const client = new Client({
     intents: [
@@ -24,220 +42,371 @@ const client = new Client({
 
 const prefix = '!';
 
-// Create the music player
+// =============================
+// MUSIC PLAYER
+// =============================
+
 const player = createAudioPlayer();
+
+// =============================
+// BOT READY
+// =============================
 
 client.once('clientReady', () => {
     console.log(`🤖 Logged in as ${client.user.tag}!`);
 });
 
+// =============================
+// PLAYER ERROR
+// =============================
+
+player.on('error', error => {
+    console.error('❌ Audio player error:', error);
+});
+
+// =============================
+// MESSAGES
+// =============================
+
 client.on('messageCreate', async message => {
-
-    // Ignore bots
-    if (message.author.bot) return;
-
-    // Only accept commands starting with !
-    if (!message.content.startsWith(prefix)) return;
-
-    const args = message.content
-        .slice(prefix.length)
-        .trim()
-        .split(/ +/);
-
-    const command = args.shift().toLowerCase();
-
-
-    // =====================
-    // !hello
-    // =====================
-
-    if (command === 'hello') {
-        return message.reply('Hello! 👋');
-    }
-
-
-    // =====================
-    // !ping
-    // =====================
-
-    if (command === 'ping') {
-        return message.reply('🏓 Pong!');
-    }
-
-
-    // =====================
-    // !join
-    // =====================
-
-    if (command === 'join') {
-
-        const voiceChannel = message.member.voice.channel;
-
-        if (!voiceChannel) {
-            return message.reply(
-                '❌ Join a voice channel first!'
-            );
-        }
-
-        const connection = joinVoiceChannel({
-            channelId: voiceChannel.id,
-            guildId: message.guild.id,
-            adapterCreator: message.guild.voiceAdapterCreator
-        });
-
-        try {
-            await entersState(
-                connection,
-                VoiceConnectionStatus.Ready,
-                20_000
-            );
-
-            connection.subscribe(player);
-
-            return message.reply(
-                '🎵 Joined the voice channel!'
-            );
-
-        } catch (error) {
-
-            connection.destroy();
-
-            console.error(error);
-
-            return message.reply(
-                '❌ I could not join the voice channel.'
-            );
-        }
-    }
-
-
-    // =====================
-// !play
-// =====================
-
-if (command === 'play') {
-
-    const voiceChannel = message.member.voice.channel;
-
-    if (!voiceChannel) {
-        return message.reply('❌ Join a voice channel first!');
-    }
-
-    const songName = args.join(' ');
-
-    if (!songName) {
-        return message.reply(
-            '❌ Please type a song name!\nExample: `!play Shape of You`'
-        );
-    }
 
     try {
 
-        // Search YouTube
-        const results = await play.search(songName, {
-            limit: 1,
-            source: { youtube: "video" }
-        });
+        // Ignore bots
+        if (message.author.bot) return;
 
-        if (!results || results.length === 0) {
-            return message.reply('❌ I could not find that song!');
+        // Ignore messages without prefix
+        if (!message.content.startsWith(prefix)) return;
+
+        const args = message.content
+            .slice(prefix.length)
+            .trim()
+            .split(/\s+/);
+
+        const command = args.shift()?.toLowerCase();
+
+        // =============================
+        // !hello
+        // =============================
+
+        if (command === 'hello') {
+            return message.reply('Hello! 👋');
         }
 
-        const song = results[0];
+        // =============================
+        // !ping
+        // =============================
 
-        // Make sure we got a valid URL
-        if (!song.url) {
-            console.log(song);
-            return message.reply(
-                '❌ I found a result, but could not get its YouTube link.'
+        if (command === 'ping') {
+            return message.reply('🏓 Pong!');
+        }
+
+        // =============================
+        // !join
+        // =============================
+
+        if (command === 'join') {
+
+            const voiceChannel = message.member?.voice?.channel;
+
+            if (!voiceChannel) {
+                return message.reply(
+                    '❌ Join a voice channel first!'
+                );
+            }
+
+            let connection = getVoiceConnection(
+                message.guild.id
             );
-        }
 
-        // Join the voice channel
-        let connection = getVoiceConnection(message.guild.id);
-
-        if (!connection) {
+            if (connection) {
+                return message.reply(
+                    '🎵 I am already in a voice channel!'
+                );
+            }
 
             connection = joinVoiceChannel({
                 channelId: voiceChannel.id,
                 guildId: message.guild.id,
-                adapterCreator: message.guild.voiceAdapterCreator
+                adapterCreator:
+                    message.guild.voiceAdapterCreator
             });
 
-            await entersState(
-                connection,
-                VoiceConnectionStatus.Ready,
-                20_000
+            try {
+
+                await entersState(
+                    connection,
+                    VoiceConnectionStatus.Ready,
+                    20_000
+                );
+
+                connection.subscribe(player);
+
+                return message.reply(
+                    '🎵 Joined the voice channel!'
+                );
+
+            } catch (error) {
+
+                console.error(
+                    '❌ Voice connection error:',
+                    error
+                );
+
+                connection.destroy();
+
+                return message.reply(
+                    '❌ I could not join the voice channel.'
+                );
+            }
+        }
+
+        // =============================
+        // !play
+        // =============================
+
+        if (command === 'play') {
+
+            const voiceChannel = message.member?.voice?.channel;
+
+            if (!voiceChannel) {
+                return message.reply(
+                    '❌ Join a voice channel first!'
+                );
+            }
+
+            const songName = args.join(' ');
+
+            if (!songName) {
+                return message.reply(
+                    '❌ Please type a song name!\n' +
+                    'Example: `!play Shape of You`'
+                );
+            }
+
+            await message.channel.send(
+                `🔎 Searching for **${songName}**...`
+            );
+
+            // =============================
+            // SEARCH YOUTUBE
+            // =============================
+
+            const searchResult = await youtubedl(
+                `ytsearch1:${songName}`,
+                {
+                    dumpSingleJson: true,
+                    noWarnings: true,
+                    noPlaylist: true,
+                    skipDownload: true,
+
+                    extractorArgs:
+                        'youtube:player_client=mweb,web_safari'
+                }
+            );
+
+            if (
+                !searchResult ||
+                !searchResult.entries ||
+                searchResult.entries.length === 0
+            ) {
+                return message.reply(
+                    '❌ I could not find that song!'
+                );
+            }
+
+            const song = searchResult.entries[0];
+
+            if (!song.webpage_url) {
+                return message.reply(
+                    '❌ I could not get the YouTube URL.'
+                );
+            }
+
+            // =============================
+            // VOICE CONNECTION
+            // =============================
+
+            let connection = getVoiceConnection(
+                message.guild.id
+            );
+
+            if (!connection) {
+
+                connection = joinVoiceChannel({
+                    channelId: voiceChannel.id,
+                    guildId: message.guild.id,
+                    adapterCreator:
+                        message.guild.voiceAdapterCreator
+                });
+
+                try {
+
+                    await entersState(
+                        connection,
+                        VoiceConnectionStatus.Ready,
+                        20_000
+                    );
+
+                } catch (error) {
+
+                    console.error(
+                        '❌ Could not connect to voice:',
+                        error
+                    );
+
+                    connection.destroy();
+
+                    return message.reply(
+                        '❌ I could not connect to the voice channel.'
+                    );
+                }
+            }
+
+            connection.subscribe(player);
+
+            // =============================
+            // GET AUDIO
+            // =============================
+
+            const audioProcess = youtubedl.exec(
+                song.webpage_url,
+                {
+                    output: '-',
+
+                    format:
+                        'bestaudio[acodec=opus][ext=webm]/' +
+                        'bestaudio[acodec=opus]/' +
+                        'bestaudio',
+
+                    noPlaylist: true,
+
+                    extractorArgs:
+                        'youtube:player_client=mweb,web_safari',
+
+                    quiet: true,
+                    noWarnings: true
+                }
+            );
+
+            audioProcess.stderr.on(
+                'data',
+                data => {
+                    console.log(
+                        'yt-dlp:',
+                        data.toString()
+                    );
+                }
+            );
+
+            audioProcess.on(
+                'error',
+                error => {
+                    console.error(
+                        '❌ yt-dlp error:',
+                        error
+                    );
+                }
+            );
+
+            // =============================
+            // CREATE AUDIO RESOURCE
+            // =============================
+
+            const resource = createAudioResource(
+                audioProcess.stdout,
+                {
+                    inputType: StreamType.WebmOpus
+                }
+            );
+
+            // =============================
+            // PLAY
+            // =============================
+
+            player.play(resource);
+
+            return message.reply(
+                `▶️ Now playing: **${song.title}**`
             );
         }
 
-        // Get the music stream
-        const stream = await play.stream(song.url);
+        // =============================
+        // !stop
+        // =============================
 
-        const resource = createAudioResource(
-            stream.stream,
-            {
-                inputType: stream.type
+        if (command === 'stop') {
+
+            player.stop();
+
+            return message.reply(
+                '⏹️ Music stopped!'
+            );
+        }
+
+        // =============================
+        // !leave
+        // =============================
+
+        if (command === 'leave') {
+
+            const connection = getVoiceConnection(
+                message.guild.id
+            );
+
+            if (!connection) {
+                return message.reply(
+                    '❌ I am not in a voice channel!'
+                );
             }
-        );
 
-        // Connect and play
-        connection.subscribe(player);
-        player.play(resource);
+            player.stop();
 
-        return message.reply(
-            `🎵 Now playing: **${song.title}**`
-        );
+            connection.destroy();
+
+            return message.reply(
+                '👋 Left the voice channel!'
+            );
+        }
 
     } catch (error) {
 
-        console.error(error);
-
-        return message.reply(
-            '❌ Something went wrong while trying to play that song.'
+        console.error(
+            '❌ Command error:',
+            error
         );
-    }
-}
 
+        try {
 
-    // =====================
-    // !stop
-    // =====================
+            await message.reply(
+                '❌ Something went wrong. Check the console/logs.'
+            );
 
-    if (command === 'stop') {
+        } catch (replyError) {
 
-        player.stop();
-
-        return message.reply('⏹️ Music stopped!');
-    }
-
-
-    // =====================
-    // !leave
-    // =====================
-
-    if (command === 'leave') {
-
-        const connection = getVoiceConnection(message.guild.id);
-
-        if (!connection) {
-            return message.reply(
-                '❌ I am not in a voice channel!'
+            console.error(
+                '❌ Could not send error message:',
+                replyError
             );
         }
-
-        player.stop();
-
-        connection.destroy();
-
-        return message.reply(
-            '👋 Left the voice channel!'
-        );
     }
 
-});
+}); // <-- THIS WAS MISSING
 
-
+// =============================
 // LOGIN
+// =============================
 
-client.login(process.env.TOKEN);
+client.login(process.env.TOKEN)
+    .then(() => {
+        console.log('🔐 Login successful.');
+    })
+    .catch(error => {
+        console.error(
+            '❌ Discord login failed:'
+        );
+
+        console.error(error);
+
+        process.exit(1);
+    });
