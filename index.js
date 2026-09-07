@@ -115,7 +115,7 @@ console.log('🎵 yt-dlp is ready.');
 client.once('clientReady', () => {
 
 ```
-console.log(`🤖 Logged in as ${client.user.tag}!`);
+console.log('🤖 Logged in as ' + client.user.tag + '!');
 console.log('✅ Bot is ready.');
 ```
 
