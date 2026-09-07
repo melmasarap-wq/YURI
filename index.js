@@ -1,4 +1,3 @@
-```js
 require("dotenv").config();
 
 const {
@@ -24,11 +23,11 @@ const PREFIX = "!";
 
 const ytDlpPath = process.env.YTDLP_PATH || "yt-dlp";
 
-let ytDlp;
+let ytDlp = null;
 let currentProcess = null;
 let currentConnection = null;
 
-// Prevent old !play commands from taking over
+// Used to prevent old play commands from taking over
 let playbackId = 0;
 
 /* =========================================================
@@ -36,7 +35,7 @@ let playbackId = 0;
 ========================================================= */
 
 if (!process.env.TOKEN) {
-    console.error("❌ TOKEN is missing!");
+    console.error("TOKEN is missing!");
     process.exit(1);
 }
 
@@ -65,19 +64,19 @@ const player = createAudioPlayer();
    PLAYER EVENTS
 ========================================================= */
 
-player.on(AudioPlayerStatus.Playing, () => {
-    console.log("▶️ Audio player is playing.");
+player.on(AudioPlayerStatus.Playing, function () {
+    console.log("Audio player is playing.");
 });
 
-player.on(AudioPlayerStatus.Idle, () => {
-    console.log("⏹️ Audio player is idle.");
+player.on(AudioPlayerStatus.Idle, function () {
+    console.log("Audio player is idle.");
 
-    // DO NOT kill currentProcess here.
-    // A new !play may already be running.
+    // Do NOT kill currentProcess here.
+    // A new play command may already be running.
 });
 
-player.on("error", error => {
-    console.error("❌ Audio player error:", error.message);
+player.on("error", function (error) {
+    console.error("Audio player error:", error.message);
 });
 
 /* =========================================================
@@ -124,10 +123,8 @@ async function setupYtDlp() {
         );
 
     } catch (error) {
-
-        console.error("❌ yt-dlp is not working.");
+        console.error("yt-dlp is not working.");
         console.error(error);
-
         process.exit(1);
     }
 }
@@ -137,11 +134,9 @@ async function setupYtDlp() {
 ========================================================= */
 
 async function searchYouTube(query) {
-
     console.log("Searching YouTube for: " + query);
 
     try {
-
         const output = await ytDlp.execPromise([
             "--dump-single-json",
             "--flat-playlist",
@@ -170,13 +165,12 @@ async function searchYouTube(query) {
         return {
             id: video.id,
             title: video.title || "Unknown title",
-            url: `https://www.youtube.com/watch?v=${video.id}`
+            url: "https://www.youtube.com/watch?v=" + video.id
         };
 
     } catch (error) {
-
         console.error(
-            "❌ YouTube search error:",
+            "YouTube search error:",
             error.message
         );
 
@@ -189,8 +183,7 @@ async function searchYouTube(query) {
 ========================================================= */
 
 function getAudioStream(url, thisPlayback) {
-
-    return new Promise((resolve, reject) => {
+    return new Promise(function (resolve, reject) {
 
         if (thisPlayback !== playbackId) {
             reject(
@@ -201,11 +194,10 @@ function getAudioStream(url, thisPlayback) {
 
         console.log("Starting audio stream...");
 
-        let process;
+        let audioProcess;
 
         try {
-
-            process = spawn(
+            audioProcess = spawn(
                 ytDlpPath,
                 [
                     "-f",
@@ -230,15 +222,13 @@ function getAudioStream(url, thisPlayback) {
             );
 
         } catch (error) {
-
             reject(error);
             return;
         }
 
-        if (!process.stdout) {
-
+        if (!audioProcess.stdout) {
             try {
-                process.kill("SIGKILL");
+                audioProcess.kill("SIGKILL");
             } catch (error) {}
 
             reject(
@@ -250,17 +240,16 @@ function getAudioStream(url, thisPlayback) {
             return;
         }
 
-        currentProcess = process;
+        currentProcess = audioProcess;
 
         let stderr = "";
-        let finished = false;
+        let settled = false;
 
         /* =================================================
            STDERR
         ================================================= */
 
-        process.stderr.on("data", data => {
-
+        audioProcess.stderr.on("data", function (data) {
             const text = data.toString();
 
             stderr += text;
@@ -277,31 +266,21 @@ function getAudioStream(url, thisPlayback) {
            PROCESS ERROR
         ================================================= */
 
-        process.on("error", error => {
-
+        audioProcess.on("error", function (error) {
             console.error(
-                "❌ yt-dlp process error:",
+                "yt-dlp process error:",
                 error.message
             );
 
-            if (currentProcess === process) {
+            if (currentProcess === audioProcess) {
                 currentProcess = null;
             }
 
-            if (finished) {
+            if (settled) {
                 return;
             }
 
-            finished = true;
-
-            if (thisPlayback !== playbackId) {
-                reject(
-                    new Error(
-                        "Playback request was replaced."
-                    )
-                );
-                return;
-            }
+            settled = true;
 
             reject(error);
         });
@@ -310,37 +289,27 @@ function getAudioStream(url, thisPlayback) {
            PROCESS CLOSE
         ================================================= */
 
-        process.on("close", code => {
+        audioProcess.on("close", function (code) {
 
-            if (currentProcess === process) {
+            if (currentProcess === audioProcess) {
                 currentProcess = null;
             }
 
             console.log(
-                `yt-dlp process closed with code ${code}`
+                "yt-dlp process closed with code " + code
             );
 
             if (thisPlayback !== playbackId) {
                 return;
             }
 
-            if (finished) {
-                return;
-            }
-
-            if (code !== 0) {
-
-                finished = true;
+            if (code !== 0 && !settled) {
+                settled = true;
 
                 if (
-                    stderr.includes(
-                        "Sign in to confirm"
-                    ) ||
-                    stderr.includes(
-                        "not a bot"
-                    )
+                    stderr.includes("Sign in to confirm") ||
+                    stderr.includes("not a bot")
                 ) {
-
                     reject(
                         new Error(
                             "YouTube blocked audio playback from the Railway server."
@@ -352,7 +321,7 @@ function getAudioStream(url, thisPlayback) {
 
                 reject(
                     new Error(
-                        `yt-dlp exited with code ${code}.`
+                        "yt-dlp exited with code " + code + "."
                     )
                 );
             }
@@ -363,8 +332,8 @@ function getAudioStream(url, thisPlayback) {
         ================================================= */
 
         resolve({
-            process,
-            stream: process.stdout
+            process: audioProcess,
+            stream: audioProcess.stdout
         });
     });
 }
@@ -373,10 +342,10 @@ function getAudioStream(url, thisPlayback) {
    DISCORD READY
 ========================================================= */
 
-client.once("clientReady", () => {
+client.once("clientReady", function () {
 
     console.log(
-        `Logged in as ${client.user.tag}!`
+        "Logged in as " + client.user.tag + "!"
     );
 
     console.log("Bot is ready.");
@@ -390,7 +359,7 @@ client.once("clientReady", () => {
    MESSAGE HANDLER
 ========================================================= */
 
-client.on("messageCreate", async message => {
+client.on("messageCreate", async function (message) {
 
     if (message.author.bot) {
         return;
@@ -405,16 +374,22 @@ client.on("messageCreate", async message => {
         .trim()
         .split(/\s+/);
 
-    const command = args.shift()?.toLowerCase();
+    const command = args.shift();
+
+    if (!command) {
+        return;
+    }
+
+    const lowerCommand = command.toLowerCase();
 
     /* =====================================================
        HELLO
     ===================================================== */
 
-    if (command === "hello") {
+    if (lowerCommand === "hello") {
 
         await message.reply(
-            "Hello! I'm YURI BOT 👋"
+            "Hello! I'm YURI BOT!"
         );
 
         return;
@@ -424,10 +399,10 @@ client.on("messageCreate", async message => {
        PING
     ===================================================== */
 
-    if (command === "ping") {
+    if (lowerCommand === "ping") {
 
         await message.reply(
-            `🏓 Pong! ${client.ws.ping}ms`
+            "Pong! " + client.ws.ping + "ms"
         );
 
         return;
@@ -437,15 +412,17 @@ client.on("messageCreate", async message => {
        JOIN
     ===================================================== */
 
-    if (command === "join") {
+    if (lowerCommand === "join") {
 
         const voiceChannel =
-            message.member?.voice?.channel;
+            message.member &&
+            message.member.voice &&
+            message.member.voice.channel;
 
         if (!voiceChannel) {
 
             await message.reply(
-                "❌ You need to join a voice channel first."
+                "You need to join a voice channel first."
             );
 
             return;
@@ -459,14 +436,13 @@ client.on("messageCreate", async message => {
                 } catch (error) {}
             }
 
-            const connection =
-                joinVoiceChannel({
-                    channelId: voiceChannel.id,
-                    guildId: voiceChannel.guild.id,
-                    adapterCreator:
-                        voiceChannel.guild.voiceAdapterCreator,
-                    selfDeaf: true
-                });
+            const connection = joinVoiceChannel({
+                channelId: voiceChannel.id,
+                guildId: voiceChannel.guild.id,
+                adapterCreator:
+                    voiceChannel.guild.voiceAdapterCreator,
+                selfDeaf: true
+            });
 
             await entersState(
                 connection,
@@ -479,18 +455,18 @@ client.on("messageCreate", async message => {
             currentConnection = connection;
 
             await message.reply(
-                `✅ Joined **${voiceChannel.name}**.`
+                "Joined " + voiceChannel.name + "."
             );
 
         } catch (error) {
 
             console.error(
-                "❌ Join error:",
+                "Join error:",
                 error
             );
 
             await message.reply(
-                "❌ I couldn't join the voice channel."
+                "I couldn't join the voice channel."
             );
         }
 
@@ -501,33 +477,35 @@ client.on("messageCreate", async message => {
        PLAY
     ===================================================== */
 
-    if (command === "play") {
+    if (lowerCommand === "play") {
 
         const query = args.join(" ");
 
         if (!query) {
 
             await message.reply(
-                "❌ Usage: `!play song name`"
+                "Usage: !play song name"
             );
 
             return;
         }
 
         const voiceChannel =
-            message.member?.voice?.channel;
+            message.member &&
+            message.member.voice &&
+            message.member.voice.channel;
 
         if (!voiceChannel) {
 
             await message.reply(
-                "❌ You need to join a voice channel first."
+                "You need to join a voice channel first."
             );
 
             return;
         }
 
         /* =================================================
-           NEW PLAYBACK
+           CREATE NEW PLAYBACK ID
         ================================================= */
 
         playbackId++;
@@ -535,7 +513,10 @@ client.on("messageCreate", async message => {
         const thisPlayback = playbackId;
 
         console.log(
-            `New playback request #${thisPlayback}: ${query}`
+            "New playback request #" +
+            thisPlayback +
+            ": " +
+            query
         );
 
         /* =================================================
@@ -550,7 +531,7 @@ client.on("messageCreate", async message => {
 
             searchingMessage =
                 await message.reply(
-                    `🔎 Searching for **${query}**...`
+                    "Searching for " + query + "..."
                 );
 
             /* =============================================
@@ -567,14 +548,14 @@ client.on("messageCreate", async message => {
             if (!video) {
 
                 await searchingMessage.edit(
-                    "❌ I couldn't find that song."
+                    "I couldn't find that song."
                 );
 
                 return;
             }
 
             console.log(
-                `Found: ${video.title}`
+                "Found: " + video.title
             );
 
             /* =============================================
@@ -613,12 +594,12 @@ client.on("messageCreate", async message => {
                     }
 
                     console.error(
-                        "❌ Voice connection error:",
+                        "Voice connection error:",
                         error
                     );
 
                     await searchingMessage.edit(
-                        "❌ I couldn't connect to the voice channel."
+                        "I couldn't connect to the voice channel."
                     );
 
                     return;
@@ -646,13 +627,14 @@ client.on("messageCreate", async message => {
                 }
 
                 console.error(
-                    "❌ Audio error:",
+                    "Audio error:",
                     error.message
                 );
 
                 await searchingMessage.edit(
-                    "❌ I couldn't play this song.\n\n" +
-                    `**Reason:** ${error.message}`
+                    "I couldn't play this song.\n\n" +
+                    "Reason: " +
+                    error.message
                 );
 
                 return;
@@ -717,11 +699,14 @@ client.on("messageCreate", async message => {
             player.play(resource);
 
             await searchingMessage.edit(
-                `🎵 Now playing: **${video.title}**`
+                "Now playing: " + video.title
             );
 
             console.log(
-                `▶️ Playing playback #${thisPlayback}: ${video.title}`
+                "Playing playback #" +
+                thisPlayback +
+                ": " +
+                video.title
             );
 
         } catch (error) {
@@ -731,7 +716,7 @@ client.on("messageCreate", async message => {
             }
 
             console.error(
-                "❌ Play command error:",
+                "Play command error:",
                 error
             );
 
@@ -740,13 +725,13 @@ client.on("messageCreate", async message => {
                 if (searchingMessage) {
 
                     await searchingMessage.edit(
-                        "❌ Something went wrong while playing the song."
+                        "Something went wrong while playing the song."
                     );
 
                 } else {
 
                     await message.reply(
-                        "❌ Something went wrong while playing the song."
+                        "Something went wrong while playing the song."
                     );
                 }
 
@@ -766,14 +751,14 @@ client.on("messageCreate", async message => {
        STOP
     ===================================================== */
 
-    if (command === "stop") {
+    if (lowerCommand === "stop") {
 
         playbackId++;
 
         stopCurrentAudio();
 
         await message.reply(
-            "⏹️ Stopped the music."
+            "Stopped the music."
         );
 
         return;
@@ -783,7 +768,7 @@ client.on("messageCreate", async message => {
        LEAVE
     ===================================================== */
 
-    if (command === "leave") {
+    if (lowerCommand === "leave") {
 
         playbackId++;
 
@@ -794,6 +779,7 @@ client.on("messageCreate", async message => {
             try {
                 currentConnection.destroy();
             } catch (error) {
+
                 console.error(
                     "Leave error:",
                     error
@@ -804,7 +790,7 @@ client.on("messageCreate", async message => {
         }
 
         await message.reply(
-            "👋 Left the voice channel."
+            "Left the voice channel."
         );
 
         return;
@@ -814,19 +800,19 @@ client.on("messageCreate", async message => {
        HELP
     ===================================================== */
 
-    if (command === "help") {
+    if (lowerCommand === "help") {
 
         await message.reply(
             [
-                "**🎵 YURI BOT COMMANDS**",
+                "YURI BOT COMMANDS",
                 "",
-                "`!play <song>` - Play a song",
-                "`!stop` - Stop music",
-                "`!join` - Join your voice channel",
-                "`!leave` - Leave voice channel",
-                "`!ping` - Check bot latency",
-                "`!hello` - Say hello",
-                "`!help` - Show commands"
+                "!play <song> - Play a song",
+                "!stop - Stop music",
+                "!join - Join your voice channel",
+                "!leave - Leave voice channel",
+                "!ping - Check bot latency",
+                "!hello - Say hello",
+                "!help - Show commands"
             ].join("\n")
         );
 
@@ -857,7 +843,7 @@ async function startBot() {
     } catch (error) {
 
         console.error(
-            "❌ Failed to start bot:",
+            "Failed to start bot:",
             error
         );
 
@@ -866,4 +852,3 @@ async function startBot() {
 }
 
 startBot();
-```
