@@ -138,7 +138,7 @@ async function setupYtDlp() {
 
 async function searchYouTube(query) {
 
-    console.log(`🔎 Searching YouTube for: ${query}`);
+    console.log("Searching YouTube for: " + query);
 
     try {
 
