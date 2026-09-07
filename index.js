@@ -1,3 +1,4 @@
+```js
 require("dotenv").config();
 
 const {
@@ -17,17 +18,22 @@ const {
 } = require("@discordjs/voice");
 
 const YTDlpWrap = require("yt-dlp-wrap").default;
+const { spawn } = require("child_process");
 
 const PREFIX = "!";
 
 const ytDlpPath = process.env.YTDLP_PATH || "yt-dlp";
+
 let ytDlp;
-
 let currentProcess = null;
-let currentGuildId = null;
+let currentConnection = null;
 
-// This prevents old !play requests from taking control again.
+// Prevent old !play commands from taking over
 let playbackId = 0;
+
+/* =========================================================
+   CHECK TOKEN
+========================================================= */
 
 if (!process.env.TOKEN) {
     console.error("❌ TOKEN is missing!");
@@ -35,6 +41,10 @@ if (!process.env.TOKEN) {
 }
 
 console.log("TOKEN found.");
+
+/* =========================================================
+   DISCORD CLIENT
+========================================================= */
 
 const client = new Client({
     intents: [
@@ -45,7 +55,30 @@ const client = new Client({
     ]
 });
 
+/* =========================================================
+   AUDIO PLAYER
+========================================================= */
+
 const player = createAudioPlayer();
+
+/* =========================================================
+   PLAYER EVENTS
+========================================================= */
+
+player.on(AudioPlayerStatus.Playing, () => {
+    console.log("▶️ Audio player is playing.");
+});
+
+player.on(AudioPlayerStatus.Idle, () => {
+    console.log("⏹️ Audio player is idle.");
+
+    // DO NOT kill currentProcess here.
+    // A new !play may already be running.
+});
+
+player.on("error", error => {
+    console.error("❌ Audio player error:", error.message);
+});
 
 /* =========================================================
    STOP CURRENT AUDIO
@@ -57,7 +90,7 @@ function stopCurrentAudio() {
     if (currentProcess) {
         try {
             currentProcess.kill("SIGKILL");
-        } catch (err) {
+        } catch (error) {
             console.log("Could not kill old yt-dlp process.");
         }
 
@@ -66,30 +99,10 @@ function stopCurrentAudio() {
 
     try {
         player.stop(true);
-    } catch (err) {
+    } catch (error) {
         console.log("Could not stop audio player.");
     }
 }
-
-/* =========================================================
-   PLAYER EVENTS
-========================================================= */
-
-player.on(AudioPlayerStatus.Playing, () => {
-    console.log("▶️ Audio player is playing.");
-});
-
-player.on(AudioPlayerStatus.Idle, () => {
-    console.log("⏹️ Audio player became idle.");
-    
-    // IMPORTANT:
-    // Do NOT kill currentProcess here.
-    // A new playback may already have started.
-});
-
-player.on("error", error => {
-    console.error("❌ Audio player error:", error.message);
-});
 
 /* =========================================================
    SETUP YT-DLP
@@ -109,9 +122,12 @@ async function setupYtDlp() {
             "yt-dlp is ready. Version:",
             String(version).trim()
         );
+
     } catch (error) {
+
         console.error("❌ yt-dlp is not working.");
         console.error(error);
+
         process.exit(1);
     }
 }
@@ -121,9 +137,11 @@ async function setupYtDlp() {
 ========================================================= */
 
 async function searchYouTube(query) {
+
     console.log(`🔎 Searching YouTube for: ${query}`);
 
     try {
+
         const output = await ytDlp.execPromise([
             "--dump-single-json",
             "--flat-playlist",
@@ -135,7 +153,11 @@ async function searchYouTube(query) {
 
         const data = JSON.parse(String(output));
 
-        if (!data || !data.entries || data.entries.length === 0) {
+        if (
+            !data ||
+            !data.entries ||
+            data.entries.length === 0
+        ) {
             return null;
         }
 
@@ -152,20 +174,28 @@ async function searchYouTube(query) {
         };
 
     } catch (error) {
-        console.error("❌ YouTube search error:", error.message);
+
+        console.error(
+            "❌ YouTube search error:",
+            error.message
+        );
+
         return null;
     }
 }
 
 /* =========================================================
-   GET AUDIO STREAM
+   START AUDIO STREAM
 ========================================================= */
 
 function getAudioStream(url, thisPlayback) {
+
     return new Promise((resolve, reject) => {
 
         if (thisPlayback !== playbackId) {
-            reject(new Error("Playback request was replaced."));
+            reject(
+                new Error("Playback request was replaced.")
+            );
             return;
         }
 
@@ -174,43 +204,67 @@ function getAudioStream(url, thisPlayback) {
         let process;
 
         try {
-            process = ytDlp.exec([
-                "-f",
-                "bestaudio[acodec=opus][ext=webm]/bestaudio[acodec=opus]/bestaudio",
 
-                "--no-playlist",
-                "--no-warnings",
-                "--no-progress",
+            process = spawn(
+                ytDlpPath,
+                [
+                    "-f",
+                    "bestaudio[acodec=opus][ext=webm]/bestaudio[acodec=opus]/bestaudio",
 
-                "-o",
-                "-",
+                    "--no-playlist",
+                    "--no-warnings",
+                    "--no-progress",
 
-                url
-            ]);
+                    "-o",
+                    "-",
+
+                    url
+                ],
+                {
+                    stdio: [
+                        "ignore",
+                        "pipe",
+                        "pipe"
+                    ]
+                }
+            );
+
         } catch (error) {
+
             reject(error);
             return;
         }
 
-        if (!process || !process.stdout) {
+        if (!process.stdout) {
+
+            try {
+                process.kill("SIGKILL");
+            } catch (error) {}
+
             reject(
                 new Error(
-                    "yt-dlp did not provide stdout."
+                    "yt-dlp could not create an audio stream."
                 )
             );
+
             return;
         }
 
         currentProcess = process;
 
         let stderr = "";
+        let finished = false;
+
+        /* =================================================
+           STDERR
+        ================================================= */
 
         process.stderr.on("data", data => {
+
             const text = data.toString();
 
             stderr += text;
 
-            // Keep Railway logs useful without flooding them.
             if (
                 text.includes("ERROR") ||
                 text.includes("WARNING")
@@ -219,26 +273,42 @@ function getAudioStream(url, thisPlayback) {
             }
         });
 
+        /* =================================================
+           PROCESS ERROR
+        ================================================= */
+
         process.on("error", error => {
-
-            if (currentProcess === process) {
-                currentProcess = null;
-            }
-
-            if (thisPlayback !== playbackId) {
-                reject(
-                    new Error("Playback request was replaced.")
-                );
-                return;
-            }
 
             console.error(
                 "❌ yt-dlp process error:",
                 error.message
             );
 
+            if (currentProcess === process) {
+                currentProcess = null;
+            }
+
+            if (finished) {
+                return;
+            }
+
+            finished = true;
+
+            if (thisPlayback !== playbackId) {
+                reject(
+                    new Error(
+                        "Playback request was replaced."
+                    )
+                );
+                return;
+            }
+
             reject(error);
         });
+
+        /* =================================================
+           PROCESS CLOSE
+        ================================================= */
 
         process.on("close", code => {
 
@@ -254,18 +324,29 @@ function getAudioStream(url, thisPlayback) {
                 return;
             }
 
+            if (finished) {
+                return;
+            }
+
             if (code !== 0) {
+
+                finished = true;
 
                 if (
                     stderr.includes(
-                        "Sign in to confirm you're not a bot"
+                        "Sign in to confirm"
+                    ) ||
+                    stderr.includes(
+                        "not a bot"
                     )
                 ) {
+
                     reject(
                         new Error(
                             "YouTube blocked audio playback from the Railway server."
                         )
                     );
+
                     return;
                 }
 
@@ -277,6 +358,10 @@ function getAudioStream(url, thisPlayback) {
             }
         });
 
+        /* =================================================
+           RESOLVE STREAM
+        ================================================= */
+
         resolve({
             process,
             stream: process.stdout
@@ -285,7 +370,7 @@ function getAudioStream(url, thisPlayback) {
 }
 
 /* =========================================================
-   BOT READY
+   DISCORD READY
 ========================================================= */
 
 client.once("clientReady", () => {
@@ -302,14 +387,18 @@ client.once("clientReady", () => {
 });
 
 /* =========================================================
-   MESSAGES
+   MESSAGE HANDLER
 ========================================================= */
 
 client.on("messageCreate", async message => {
 
-    if (message.author.bot) return;
+    if (message.author.bot) {
+        return;
+    }
 
-    if (!message.content.startsWith(PREFIX)) return;
+    if (!message.content.startsWith(PREFIX)) {
+        return;
+    }
 
     const args = message.content
         .slice(PREFIX.length)
@@ -354,31 +443,40 @@ client.on("messageCreate", async message => {
             message.member?.voice?.channel;
 
         if (!voiceChannel) {
+
             await message.reply(
                 "❌ You need to join a voice channel first."
             );
+
             return;
         }
 
         try {
 
-            const connection = joinVoiceChannel({
-                channelId: voiceChannel.id,
-                guildId: voiceChannel.guild.id,
-                adapterCreator:
-                    voiceChannel.guild.voiceAdapterCreator,
-                selfDeaf: true
-            });
+            if (currentConnection) {
+                try {
+                    currentConnection.destroy();
+                } catch (error) {}
+            }
+
+            const connection =
+                joinVoiceChannel({
+                    channelId: voiceChannel.id,
+                    guildId: voiceChannel.guild.id,
+                    adapterCreator:
+                        voiceChannel.guild.voiceAdapterCreator,
+                    selfDeaf: true
+                });
 
             await entersState(
                 connection,
                 VoiceConnectionStatus.Ready,
-                30_000
+                30000
             );
 
             connection.subscribe(player);
 
-            currentGuildId = voiceChannel.guild.id;
+            currentConnection = connection;
 
             await message.reply(
                 `✅ Joined **${voiceChannel.name}**.`
@@ -408,9 +506,11 @@ client.on("messageCreate", async message => {
         const query = args.join(" ");
 
         if (!query) {
+
             await message.reply(
                 "❌ Usage: `!play song name`"
             );
+
             return;
         }
 
@@ -418,13 +518,18 @@ client.on("messageCreate", async message => {
             message.member?.voice?.channel;
 
         if (!voiceChannel) {
+
             await message.reply(
                 "❌ You need to join a voice channel first."
             );
+
             return;
         }
 
-        // NEW PLAYBACK REQUEST
+        /* =================================================
+           NEW PLAYBACK
+        ================================================= */
+
         playbackId++;
 
         const thisPlayback = playbackId;
@@ -433,24 +538,28 @@ client.on("messageCreate", async message => {
             `New playback request #${thisPlayback}: ${query}`
         );
 
-        // Stop previous audio/process immediately.
+        /* =================================================
+           STOP OLD SONG
+        ================================================= */
+
         stopCurrentAudio();
 
-        let searchingMessage;
+        let searchingMessage = null;
 
         try {
 
-            searchingMessage = await message.reply(
-                `🔎 Searching for **${query}**...`
-            );
+            searchingMessage =
+                await message.reply(
+                    `🔎 Searching for **${query}**...`
+                );
 
             /* =============================================
                SEARCH
             ============================================= */
 
-            const video = await searchYouTube(query);
+            const video =
+                await searchYouTube(query);
 
-            // Another !play happened while searching.
             if (thisPlayback !== playbackId) {
                 return;
             }
@@ -469,61 +578,66 @@ client.on("messageCreate", async message => {
             );
 
             /* =============================================
-               JOIN VOICE
+               VOICE CONNECTION
             ============================================= */
 
-            let connection;
+            if (
+                !currentConnection ||
+                currentConnection.state.status !==
+                    VoiceConnectionStatus.Ready
+            ) {
 
-            try {
+                try {
 
-                connection = joinVoiceChannel({
-                    channelId: voiceChannel.id,
-                    guildId: voiceChannel.guild.id,
-                    adapterCreator:
-                        voiceChannel.guild.voiceAdapterCreator,
-                    selfDeaf: true
-                });
+                    currentConnection =
+                        joinVoiceChannel({
+                            channelId: voiceChannel.id,
+                            guildId: voiceChannel.guild.id,
+                            adapterCreator:
+                                voiceChannel.guild.voiceAdapterCreator,
+                            selfDeaf: true
+                        });
 
-                await entersState(
-                    connection,
-                    VoiceConnectionStatus.Ready,
-                    30_000
-                );
+                    await entersState(
+                        currentConnection,
+                        VoiceConnectionStatus.Ready,
+                        30000
+                    );
 
-                connection.subscribe(player);
+                    currentConnection.subscribe(player);
 
-                currentGuildId = voiceChannel.guild.id;
+                } catch (error) {
 
-            } catch (error) {
+                    if (thisPlayback !== playbackId) {
+                        return;
+                    }
 
-                if (thisPlayback !== playbackId) {
+                    console.error(
+                        "❌ Voice connection error:",
+                        error
+                    );
+
+                    await searchingMessage.edit(
+                        "❌ I couldn't connect to the voice channel."
+                    );
+
                     return;
                 }
-
-                console.error(
-                    "❌ Voice connection error:",
-                    error
-                );
-
-                await searchingMessage.edit(
-                    "❌ I couldn't connect to the voice channel."
-                );
-
-                return;
             }
 
             /* =============================================
-               AUDIO STREAM
+               GET AUDIO
             ============================================= */
 
             let audio;
 
             try {
 
-                audio = await getAudioStream(
-                    video.url,
-                    thisPlayback
-                );
+                audio =
+                    await getAudioStream(
+                        video.url,
+                        thisPlayback
+                    );
 
             } catch (error) {
 
@@ -536,36 +650,23 @@ client.on("messageCreate", async message => {
                     error.message
                 );
 
-                if (
-                    error.message.includes(
-                        "YouTube blocked audio playback"
-                    )
-                ) {
-
-                    await searchingMessage.edit(
-                        "❌ YouTube blocked audio playback from the Railway server.\n" +
-                        "The bot is working, but YouTube is refusing the audio request."
-                    );
-
-                } else {
-
-                    await searchingMessage.edit(
-                        `❌ Couldn't play this song.\n\`${error.message}\``
-                    );
-                }
+                await searchingMessage.edit(
+                    "❌ I couldn't play this song.\n\n" +
+                    `**Reason:** ${error.message}`
+                );
 
                 return;
             }
 
             /* =============================================
-               CHECK AGAIN BEFORE PLAYING
+               CHECK PLAYBACK ID
             ============================================= */
 
             if (thisPlayback !== playbackId) {
 
                 try {
                     audio.process.kill("SIGKILL");
-                } catch (err) {}
+                } catch (error) {}
 
                 return;
             }
@@ -574,23 +675,37 @@ client.on("messageCreate", async message => {
                CREATE AUDIO RESOURCE
             ============================================= */
 
-            const resource = createAudioResource(
-                audio.stream,
-                {
-                    inputType: StreamType.WebmOpus,
-                    inlineVolume: false
-                }
-            );
+            let resource;
+
+            try {
+
+                resource =
+                    createAudioResource(
+                        audio.stream,
+                        {
+                            inputType:
+                                StreamType.WebmOpus
+                        }
+                    );
+
+            } catch (error) {
+
+                try {
+                    audio.process.kill("SIGKILL");
+                } catch (err) {}
+
+                throw error;
+            }
 
             /* =============================================
-               FINAL CHECK
+               FINAL PLAYBACK CHECK
             ============================================= */
 
             if (thisPlayback !== playbackId) {
 
                 try {
                     audio.process.kill("SIGKILL");
-                } catch (err) {}
+                } catch (error) {}
 
                 return;
             }
@@ -609,15 +724,6 @@ client.on("messageCreate", async message => {
                 `▶️ Playing playback #${thisPlayback}: ${video.title}`
             );
 
-            // Clean up when this specific process ends.
-            audio.process.on("close", () => {
-
-                if (currentProcess === audio.process) {
-                    currentProcess = null;
-                }
-
-            });
-
         } catch (error) {
 
             if (thisPlayback !== playbackId) {
@@ -632,19 +738,23 @@ client.on("messageCreate", async message => {
             try {
 
                 if (searchingMessage) {
+
                     await searchingMessage.edit(
-                        "❌ Something went wrong while trying to play the song."
+                        "❌ Something went wrong while playing the song."
                     );
+
                 } else {
+
                     await message.reply(
-                        "❌ Something went wrong while trying to play the song."
+                        "❌ Something went wrong while playing the song."
                     );
                 }
 
-            } catch (editError) {
+            } catch (sendError) {
+
                 console.error(
                     "Could not send error message:",
-                    editError
+                    sendError
                 );
             }
         }
@@ -658,7 +768,6 @@ client.on("messageCreate", async message => {
 
     if (command === "stop") {
 
-        // Invalidate every previous play request.
         playbackId++;
 
         stopCurrentAudio();
@@ -676,47 +785,23 @@ client.on("messageCreate", async message => {
 
     if (command === "leave") {
 
-        // Invalidate old playback requests.
         playbackId++;
 
         stopCurrentAudio();
 
-        const guild =
-            message.guild;
-
-        if (!guild) {
-            return;
-        }
-
-        const connection =
-            guild.voiceStates.cache.get(
-                client.user.id
-            )?.channel;
-
-        if (connection) {
+        if (currentConnection) {
 
             try {
-
-                const voiceConnection =
-                    joinVoiceChannel({
-                        channelId: connection.id,
-                        guildId: guild.id,
-                        adapterCreator:
-                            guild.voiceAdapterCreator
-                    });
-
-                voiceConnection.destroy();
-
+                currentConnection.destroy();
             } catch (error) {
-
                 console.error(
                     "Leave error:",
                     error
                 );
             }
-        }
 
-        currentGuildId = null;
+            currentConnection = null;
+        }
 
         await message.reply(
             "👋 Left the voice channel."
@@ -750,7 +835,7 @@ client.on("messageCreate", async message => {
 });
 
 /* =========================================================
-   LOGIN
+   START BOT
 ========================================================= */
 
 async function startBot() {
@@ -761,9 +846,13 @@ async function startBot() {
 
         console.log("Logging into Discord...");
 
-        await client.login(process.env.TOKEN);
+        await client.login(
+            process.env.TOKEN
+        );
 
-        console.log("Discord login successful.");
+        console.log(
+            "Discord login successful."
+        );
 
     } catch (error) {
 
@@ -777,3 +866,4 @@ async function startBot() {
 }
 
 startBot();
+```
