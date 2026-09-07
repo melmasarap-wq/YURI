@@ -11,6 +11,7 @@
     "@discordjs/voice": "^0.19.2",
     "discord.js": "^14.27.0",
     "dotenv": "^17.2.2",
-    "yt-dlp-wrap": "^2.3.12"
+    "yt-dlp-wrap": "^2.3.12",
+    "ffmpeg-static": "^5.2.0"
   }
 }
