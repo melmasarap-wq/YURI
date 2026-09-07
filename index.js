@@ -71,6 +71,7 @@ player.on("error", (error) => {
 // =====================================================
 
 function cleanupProcesses() {
+
     if (currentYtDlpProcess) {
         try {
             currentYtDlpProcess.kill("SIGKILL");
@@ -97,11 +98,12 @@ function cleanupProcesses() {
 // =====================================================
 
 async function setupYtDlp() {
+
     try {
+
         console.log("Checking yt-dlp...");
 
-        // Railway/Nixpacks provides yt-dlp.
-        // We don't download it from GitHub anymore.
+        // Railway/Nixpacks provides yt-dlp
         ytDlp = new YTDlpWrap("yt-dlp");
 
         const version = await ytDlp.execPromise([
@@ -113,7 +115,11 @@ async function setupYtDlp() {
         );
 
     } catch (error) {
-        console.error("❌ yt-dlp is not installed.");
+
+        console.error(
+            "❌ yt-dlp is not installed or cannot be executed."
+        );
+
         console.error(error);
 
         throw error;
@@ -125,13 +131,17 @@ async function setupYtDlp() {
 // =====================================================
 
 async function searchSoundCloud(query) {
+
     if (!ytDlp) {
         throw new Error("yt-dlp is not ready.");
     }
 
-    console.log(`🔎 Searching SoundCloud: ${query}`);
+    console.log(
+        `🔎 Searching SoundCloud: ${query}`
+    );
 
     try {
+
         const output = await ytDlp.execPromise([
             "--dump-single-json",
             "--flat-playlist",
@@ -142,7 +152,9 @@ async function searchSoundCloud(query) {
         ]);
 
         if (!output) {
-            throw new Error("No search result returned.");
+            throw new Error(
+                "No search result returned."
+            );
         }
 
         const data = JSON.parse(output);
@@ -158,7 +170,9 @@ async function searchSoundCloud(query) {
         }
 
         if (!result) {
-            throw new Error("No SoundCloud result found.");
+            throw new Error(
+                "No SoundCloud result found."
+            );
         }
 
         const title =
@@ -177,8 +191,13 @@ async function searchSoundCloud(query) {
             );
         }
 
-        console.log(`🎵 Found: ${title}`);
-        console.log(`🔗 URL: ${url}`);
+        console.log(
+            `🎵 Found: ${title}`
+        );
+
+        console.log(
+            `🔗 URL: ${url}`
+        );
 
         return {
             title,
@@ -186,6 +205,7 @@ async function searchSoundCloud(query) {
         };
 
     } catch (error) {
+
         console.error(
             "❌ SoundCloud search error:",
             error
@@ -200,11 +220,16 @@ async function searchSoundCloud(query) {
 // =====================================================
 
 async function getAudioStream(url) {
+
     if (!ytDlp) {
-        throw new Error("yt-dlp is not ready.");
+        throw new Error(
+            "yt-dlp is not ready."
+        );
     }
 
-    console.log("🎧 Starting yt-dlp...");
+    console.log(
+        "🎧 Starting yt-dlp audio stream..."
+    );
 
     const wrapperProcess = ytDlp.exec([
         url,
@@ -213,6 +238,7 @@ async function getAudioStream(url) {
         "bestaudio/best",
 
         "--no-playlist",
+
         "--no-warnings",
 
         "--quiet",
@@ -228,15 +254,15 @@ async function getAudioStream(url) {
     }
 
     /*
-     * IMPORTANT:
+     * yt-dlp-wrap exec() returns a wrapper.
      *
-     * yt-dlp-wrap exec() returns a wrapper object.
-     * The actual Node ChildProcess is:
+     * The actual ChildProcess is:
      *
      * wrapperProcess.ytDlpProcess
      */
 
-    const process = wrapperProcess.ytDlpProcess;
+    const process =
+        wrapperProcess.ytDlpProcess;
 
     if (!process) {
         throw new Error(
@@ -247,6 +273,7 @@ async function getAudioStream(url) {
     currentYtDlpProcess = process;
 
     process.on("error", (error) => {
+
         console.error(
             "❌ yt-dlp process error:",
             error
@@ -254,27 +281,34 @@ async function getAudioStream(url) {
     });
 
     process.on("close", (code) => {
+
         console.log(
             `yt-dlp exited with code ${code}`
         );
 
-        if (currentYtDlpProcess === process) {
+        if (
+            currentYtDlpProcess === process
+        ) {
             currentYtDlpProcess = null;
         }
     });
 
     if (process.stderr) {
-        process.stderr.on("data", (data) => {
-            const text = data
-                .toString()
-                .trim();
 
-            if (text) {
-                console.log(
-                    `yt-dlp: ${text}`
-                );
+        process.stderr.on(
+            "data",
+            (data) => {
+
+                const text =
+                    data.toString().trim();
+
+                if (text) {
+                    console.log(
+                        `yt-dlp: ${text}`
+                    );
+                }
             }
-        });
+        );
     }
 
     if (!process.stdout) {
@@ -295,13 +329,16 @@ async function getAudioStream(url) {
 // =====================================================
 
 function startFFmpeg(inputStream) {
+
     if (!ffmpegPath) {
         throw new Error(
             "FFmpeg was not found."
         );
     }
 
-    console.log("🎛️ Starting FFmpeg...");
+    console.log(
+        "🎛️ Starting FFmpeg..."
+    );
 
     const ffmpegProcess = spawn(
         ffmpegPath,
@@ -334,35 +371,45 @@ function startFFmpeg(inputStream) {
         }
     );
 
-    currentFfmpegProcess = ffmpegProcess;
+    currentFfmpegProcess =
+        ffmpegProcess;
 
-    ffmpegProcess.on("error", (error) => {
-        console.error(
-            "❌ FFmpeg process error:",
-            error
-        );
-    });
+    ffmpegProcess.on(
+        "error",
+        (error) => {
 
-    ffmpegProcess.on("close", (code) => {
-        console.log(
-            `FFmpeg exited with code ${code}`
-        );
-
-        if (
-            currentFfmpegProcess ===
-            ffmpegProcess
-        ) {
-            currentFfmpegProcess = null;
+            console.error(
+                "❌ FFmpeg process error:",
+                error
+            );
         }
-    });
+    );
+
+    ffmpegProcess.on(
+        "close",
+        (code) => {
+
+            console.log(
+                `FFmpeg exited with code ${code}`
+            );
+
+            if (
+                currentFfmpegProcess ===
+                ffmpegProcess
+            ) {
+                currentFfmpegProcess = null;
+            }
+        }
+    );
 
     if (ffmpegProcess.stderr) {
+
         ffmpegProcess.stderr.on(
             "data",
             (data) => {
-                const text = data
-                    .toString()
-                    .trim();
+
+                const text =
+                    data.toString().trim();
 
                 if (text) {
                     console.error(
@@ -396,16 +443,31 @@ function startFFmpeg(inputStream) {
 // BOT READY
 // =====================================================
 
-client.once("ready", () => {
+client.once("clientReady", () => {
+
     console.log("");
-    console.log("==================================");
-    console.log("🤖 YURI BOT");
-    console.log("==================================");
+    console.log(
+        "=================================="
+    );
+    console.log(
+        "🤖 YURI BOT"
+    );
+    console.log(
+        "=================================="
+    );
+
     console.log(
         `Logged in as ${client.user.tag}`
     );
-    console.log("✅ Bot is ready.");
-    console.log("==================================");
+
+    console.log(
+        "✅ Bot is ready."
+    );
+
+    console.log(
+        "=================================="
+    );
+
     console.log("");
 });
 
@@ -422,19 +484,19 @@ client.on(
             return;
         }
 
-        // Prefix check
+        // Ignore messages without prefix
         if (!message.content.startsWith(PREFIX)) {
             return;
         }
 
-        const args = message.content
-            .slice(PREFIX.length)
-            .trim()
-            .split(/\s+/);
+        const args =
+            message.content
+                .slice(PREFIX.length)
+                .trim()
+                .split(/\s+/);
 
-        const command = args
-            .shift()
-            .toLowerCase();
+        const command =
+            args.shift().toLowerCase();
 
         // =================================================
         // !HELLO
@@ -483,6 +545,7 @@ client.on(
             try {
 
                 if (connection) {
+
                     try {
                         connection.destroy();
                     } catch {}
@@ -490,6 +553,7 @@ client.on(
 
                 connection =
                     joinVoiceChannel({
+
                         channelId:
                             voiceChannel.id,
 
@@ -530,9 +594,8 @@ client.on(
 
         if (command === "play") {
 
-            const song = args
-                .join(" ")
-                .trim();
+            const song =
+                args.join(" ").trim();
 
             if (!song) {
 
@@ -563,7 +626,7 @@ client.on(
                     `🎵 Play request: ${song}`
                 );
 
-                // Stop old audio
+                // Stop previous audio
                 player.stop();
 
                 cleanupProcesses();
@@ -581,19 +644,21 @@ client.on(
                     !result ||
                     !result.url
                 ) {
+
                     throw new Error(
                         "Song was not found."
                     );
                 }
 
                 // -----------------------------------------
-                // JOIN VOICE
+                // JOIN VOICE CHANNEL
                 // -----------------------------------------
 
                 if (!connection) {
 
                     connection =
                         joinVoiceChannel({
+
                             channelId:
                                 voiceChannel.id,
 
@@ -604,7 +669,6 @@ client.on(
                                 voiceChannel.guild
                                     .voiceAdapterCreator
                         });
-
                 }
 
                 connection.subscribe(
@@ -612,7 +676,7 @@ client.on(
                 );
 
                 // -----------------------------------------
-                // GET AUDIO
+                // GET YT-DLP STREAM
                 // -----------------------------------------
 
                 const ytDlpStream =
@@ -621,13 +685,14 @@ client.on(
                     );
 
                 if (!ytDlpStream) {
+
                     throw new Error(
                         "yt-dlp returned an invalid stream."
                     );
                 }
 
                 // -----------------------------------------
-                // FFMPEG
+                // START FFMPEG
                 // -----------------------------------------
 
                 const ffmpegProcess =
@@ -638,13 +703,14 @@ client.on(
                 if (
                     !ffmpegProcess.stdout
                 ) {
+
                     throw new Error(
                         "FFmpeg did not provide stdout."
                     );
                 }
 
                 // -----------------------------------------
-                // DISCORD RESOURCE
+                // CREATE DISCORD RESOURCE
                 // -----------------------------------------
 
                 const resource =
@@ -804,7 +870,9 @@ async function startBot() {
             process.exit(1);
         }
 
-        console.log("TOKEN found.");
+        console.log(
+            "TOKEN found."
+        );
 
         // Setup yt-dlp
         await setupYtDlp();
