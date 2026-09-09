@@ -15,7 +15,6 @@ const {
     createAudioResource,
     AudioPlayerStatus,
     VoiceConnectionStatus,
-    StreamType,
     entersState
 } = require("@discordjs/voice");
 
@@ -55,6 +54,7 @@ function getYouTubeCookieKeys() {
             return numberA - numberB;
 
         });
+
 }
 
 
@@ -76,6 +76,7 @@ function getYouTubeCookies() {
 
 
     return process.env.YOUTUBE_COOKIES || "";
+
 }
 
 
@@ -96,6 +97,7 @@ function setupYouTubeCookies() {
         );
 
         return null;
+
     }
 
 
@@ -144,7 +146,9 @@ function setupYouTubeCookies() {
         );
 
         return null;
+
     }
+
 }
 
 
@@ -218,6 +222,7 @@ function getGuildMusic(guildId) {
 
 
     return guildMusic.get(guildId);
+
 }
 
 
@@ -232,6 +237,7 @@ if (!process.env.TOKEN) {
     );
 
     process.exit(1);
+
 }
 
 
@@ -298,6 +304,7 @@ function stopCurrentAudio(guildId) {
 
         music.currentProcess =
             null;
+
     }
 
 
@@ -312,6 +319,7 @@ function stopCurrentAudio(guildId) {
         );
 
     }
+
 }
 
 
@@ -354,12 +362,16 @@ async function setupYtDlp() {
             "yt-dlp is not working."
         );
 
+
         console.error(
             error
         );
 
+
         process.exit(1);
+
     }
+
 }
 
 
@@ -388,10 +400,6 @@ async function searchYouTube(query) {
             "--no-playlist",
 
             "--skip-download",
-
-            "--extractor-args",
-
-            "youtube:player_client=android_vr,web_embedded",
 
             "ytsearch1:" + query
 
@@ -427,6 +435,7 @@ async function searchYouTube(query) {
         ) {
 
             return null;
+
         }
 
 
@@ -437,6 +446,7 @@ async function searchYouTube(query) {
         if (!video.id) {
 
             return null;
+
         }
 
 
@@ -461,8 +471,11 @@ async function searchYouTube(query) {
             error.message
         );
 
+
         return null;
+
     }
+
 }
 
 
@@ -495,6 +508,7 @@ function getAudioStream(
                 );
 
                 return;
+
             }
 
 
@@ -506,9 +520,7 @@ function getAudioStream(
 
 
             // =================================================
-            // IMPORTANT:
-            // Use a flexible format instead of requiring
-            // Opus/WebM specifically.
+            // FLEXIBLE AUDIO FORMAT
             // =================================================
 
             let audioArgs = [
@@ -523,16 +535,16 @@ function getAudioStream(
 
                 "--no-progress",
 
-                "--extractor-args",
-
-                "youtube:player_client=android_vr,web_embedded",
-
                 "-o",
 
                 "-"
 
             ];
 
+
+            // =================================================
+            // YOUTUBE COOKIES
+            // =================================================
 
             if (getYouTubeCookies()) {
 
@@ -572,6 +584,7 @@ function getAudioStream(
                 reject(error);
 
                 return;
+
             }
 
 
@@ -593,6 +606,7 @@ function getAudioStream(
                 );
 
                 return;
+
             }
 
 
@@ -601,24 +615,87 @@ function getAudioStream(
 
 
             let stderr = "";
+
             let settled = false;
+
             let receivedAudioData = false;
 
 
             // =================================================
-            // STDOUT
+            // WAIT FOR ACTUAL AUDIO DATA
             // =================================================
 
-            audioProcess.stdout.on(
+            audioProcess.stdout.once(
                 "data",
                 function (chunk) {
 
                     if (
-                        chunk &&
-                        chunk.length > 0
+                        !chunk ||
+                        chunk.length === 0
                     ) {
 
-                        receivedAudioData = true;
+                        return;
+
+                    }
+
+
+                    receivedAudioData =
+                        true;
+
+
+                    console.log(
+                        "yt-dlp started sending audio data in guild " +
+                        guildId
+                    );
+
+
+                    if (
+                        thisPlayback !==
+                        music.playbackId
+                    ) {
+
+                        try {
+
+                            audioProcess.kill(
+                                "SIGKILL"
+                            );
+
+                        } catch (error) {}
+
+
+                        if (!settled) {
+
+                            settled = true;
+
+
+                            reject(
+                                new Error(
+                                    "Playback request was replaced."
+                                )
+                            );
+
+                        }
+
+
+                        return;
+
+                    }
+
+
+                    if (!settled) {
+
+                        settled = true;
+
+
+                        resolve({
+
+                            process:
+                                audioProcess,
+
+                            stream:
+                                audioProcess.stdout
+
+                        });
 
                     }
 
@@ -677,12 +754,14 @@ function getAudioStream(
 
                         music.currentProcess =
                             null;
+
                     }
 
 
                     if (settled) {
 
                         return;
+
                     }
 
 
@@ -710,6 +789,7 @@ function getAudioStream(
 
                         music.currentProcess =
                             null;
+
                     }
 
 
@@ -733,11 +813,16 @@ function getAudioStream(
                     ) {
 
                         return;
+
                     }
 
 
+                    // =================================================
+                    // FAILED BEFORE AUDIO STARTED
+                    // =================================================
+
                     if (
-                        code !== 0 &&
+                        !receivedAudioData &&
                         !settled
                     ) {
 
@@ -750,9 +835,6 @@ function getAudioStream(
                             ) ||
                             stderr.includes(
                                 "not a bot"
-                            ) ||
-                            stderr.includes(
-                                "PO Token"
                             )
                         ) {
 
@@ -763,6 +845,7 @@ function getAudioStream(
                             );
 
                             return;
+
                         }
 
 
@@ -779,6 +862,24 @@ function getAudioStream(
                             );
 
                             return;
+
+                        }
+
+
+                        if (
+                            stderr.includes(
+                                "PO Token"
+                            )
+                        ) {
+
+                            reject(
+                                new Error(
+                                    "YouTube requires a PO Token for this video."
+                                )
+                            );
+
+                            return;
+
                         }
 
 
@@ -786,32 +887,34 @@ function getAudioStream(
                             new Error(
                                 "yt-dlp exited with code " +
                                 code +
-                                "."
+                                " before producing audio."
                             )
                         );
+
+                        return;
+
+                    }
+
+
+                    // =================================================
+                    // NORMAL END
+                    // =================================================
+
+                    if (
+                        code === 0 &&
+                        receivedAudioData
+                    ) {
+
+                        return;
 
                     }
 
                 }
             );
 
-
-            // =================================================
-            // RETURN STREAM
-            // =================================================
-
-            resolve({
-
-                process:
-                    audioProcess,
-
-                stream:
-                    audioProcess.stdout
-
-            });
-
         }
     );
+
 }
 
 
@@ -860,6 +963,7 @@ client.on(
         ) {
 
             return;
+
         }
 
 
@@ -870,6 +974,7 @@ client.on(
         ) {
 
             return;
+
         }
 
 
@@ -887,6 +992,7 @@ client.on(
         if (!command) {
 
             return;
+
         }
 
 
@@ -897,6 +1003,7 @@ client.on(
         if (!message.guild) {
 
             return;
+
         }
 
 
@@ -921,6 +1028,7 @@ client.on(
             );
 
             return;
+
         }
 
 
@@ -939,6 +1047,7 @@ client.on(
             );
 
             return;
+
         }
 
 
@@ -963,6 +1072,7 @@ client.on(
                 );
 
                 return;
+
             }
 
 
@@ -1037,6 +1147,7 @@ client.on(
             }
 
             return;
+
         }
 
 
@@ -1059,6 +1170,7 @@ client.on(
                 );
 
                 return;
+
             }
 
 
@@ -1075,6 +1187,7 @@ client.on(
                 );
 
                 return;
+
             }
 
 
@@ -1130,6 +1243,7 @@ client.on(
                 ) {
 
                     return;
+
                 }
 
 
@@ -1140,6 +1254,7 @@ client.on(
                     );
 
                     return;
+
                 }
 
 
@@ -1199,6 +1314,7 @@ client.on(
                         ) {
 
                             return;
+
                         }
 
 
@@ -1213,7 +1329,9 @@ client.on(
                         );
 
                         return;
+
                     }
+
                 }
 
 
@@ -1241,6 +1359,7 @@ client.on(
                     ) {
 
                         return;
+
                     }
 
 
@@ -1258,6 +1377,7 @@ client.on(
 
 
                     return;
+
                 }
 
 
@@ -1280,6 +1400,7 @@ client.on(
 
 
                     return;
+
                 }
 
 
@@ -1291,13 +1412,6 @@ client.on(
 
 
                 try {
-
-                    /*
-                        We no longer force WebmOpus.
-
-                        yt-dlp may return a different audio
-                        container/codec depending on YouTube.
-                    */
 
                     resource =
                         createAudioResource(
@@ -1316,6 +1430,7 @@ client.on(
 
 
                     throw error;
+
                 }
 
 
@@ -1338,6 +1453,7 @@ client.on(
 
 
                     return;
+
                 }
 
 
@@ -1373,6 +1489,7 @@ client.on(
                 ) {
 
                     return;
+
                 }
 
 
@@ -1412,6 +1529,7 @@ client.on(
             }
 
             return;
+
         }
 
 
@@ -1437,6 +1555,7 @@ client.on(
 
 
             return;
+
         }
 
 
@@ -1476,6 +1595,7 @@ client.on(
 
                 music.connection =
                     null;
+
             }
 
 
@@ -1485,6 +1605,7 @@ client.on(
 
 
             return;
+
         }
 
 
@@ -1524,6 +1645,7 @@ client.on(
 
 
             return;
+
         }
 
     }
@@ -1564,7 +1686,9 @@ async function startBot() {
 
 
         process.exit(1);
+
     }
+
 }
 
 
