@@ -15,11 +15,13 @@ const {
     createAudioResource,
     AudioPlayerStatus,
     VoiceConnectionStatus,
+    StreamType,
     entersState
 } = require("@discordjs/voice");
 
 const YTDlpWrap = require("yt-dlp-wrap").default;
 const { spawn } = require("child_process");
+const ffmpegPath = require("ffmpeg-static");
 
 const PREFIX = "!";
 const ytDlpPath = process.env.YTDLP_PATH || "yt-dlp";
@@ -172,11 +174,6 @@ function getYtDlpCommonArgs() {
     ];
 
 
-    /*
-     * Use Node as yt-dlp's JavaScript runtime
-     * when Node 22 or newer is available.
-     */
-
     const nodeMajor =
         parseInt(
             process.versions.node.split(".")[0],
@@ -288,7 +285,10 @@ function getGuildMusic(guildId) {
             {
                 player: player,
                 connection: null,
+
+                // Contains both yt-dlp and FFmpeg
                 currentProcess: null,
+
                 playbackId: 0
             }
         );
@@ -318,6 +318,31 @@ if (!process.env.TOKEN) {
 
 console.log(
     "TOKEN found."
+);
+
+
+// =========================================================
+// CHECK FFMPEG
+// =========================================================
+
+if (!ffmpegPath) {
+
+    console.error(
+        "FFmpeg was not found."
+    );
+
+    console.error(
+        "Make sure ffmpeg-static is installed."
+    );
+
+    process.exit(1);
+
+}
+
+
+console.log(
+    "FFmpeg path:",
+    ffmpegPath
 );
 
 
@@ -364,14 +389,12 @@ function stopCurrentAudio(guildId) {
 
         try {
 
-            music.currentProcess.kill(
-                "SIGKILL"
-            );
+            music.currentProcess.kill();
 
         } catch (error) {
 
             console.log(
-                "Could not kill old yt-dlp process."
+                "Could not kill current audio processes."
             );
 
         }
@@ -437,6 +460,10 @@ async function setupYtDlp() {
             process.versions.node
         );
 
+
+        console.log(
+            "FFmpeg is ready."
+        );
 
     } catch (error) {
 
@@ -563,6 +590,18 @@ async function searchYouTube(query) {
 
 // =========================================================
 // START AUDIO STREAM
+//
+// PIPELINE:
+//
+// YouTube
+//    ↓
+// yt-dlp
+//    ↓
+// FFmpeg
+//    ↓
+// Raw PCM 48kHz Stereo
+//    ↓
+// Discord
 // =========================================================
 
 function getAudioStream(
@@ -602,7 +641,7 @@ function getAudioStream(
 
 
             // =================================================
-            // AUDIO ARGUMENTS
+            // YT-DLP
             // =================================================
 
             let audioArgs =
@@ -612,19 +651,13 @@ function getAudioStream(
             audioArgs.push(
 
                 "-f",
-
                 "bestaudio/best",
 
                 "-o",
-
                 "-"
 
             );
 
-
-            // =================================================
-            // COOKIES
-            // =================================================
 
             if (getYouTubeCookies()) {
 
@@ -641,12 +674,12 @@ function getAudioStream(
             );
 
 
-            let audioProcess;
+            let ytProcess;
 
 
             try {
 
-                audioProcess =
+                ytProcess =
                     spawn(
                         ytDlpPath,
                         audioArgs,
@@ -668,11 +701,11 @@ function getAudioStream(
             }
 
 
-            if (!audioProcess.stdout) {
+            if (!ytProcess.stdout) {
 
                 try {
 
-                    audioProcess.kill(
+                    ytProcess.kill(
                         "SIGKILL"
                     );
 
@@ -690,22 +723,272 @@ function getAudioStream(
             }
 
 
-            music.currentProcess =
-                audioProcess;
+            // =================================================
+            // FFMPEG
+            // =================================================
 
+            let ffmpegProcess;
+
+
+            try {
+
+                ffmpegProcess =
+                    spawn(
+                        ffmpegPath,
+                        [
+
+                            "-hide_banner",
+
+                            "-loglevel",
+                            "error",
+
+                            "-i",
+                            "pipe:0",
+
+                            "-vn",
+
+                            "-f",
+                            "s16le",
+
+                            "-ar",
+                            "48000",
+
+                            "-ac",
+                            "2",
+
+                            "pipe:1"
+
+                        ],
+                        {
+                            stdio: [
+                                "pipe",
+                                "pipe",
+                                "pipe"
+                            ]
+                        }
+                    );
+
+            } catch (error) {
+
+                try {
+
+                    ytProcess.kill(
+                        "SIGKILL"
+                    );
+
+                } catch (err) {}
+
+
+                reject(error);
+
+                return;
+
+            }
+
+
+            if (!ffmpegProcess.stdout) {
+
+                try {
+
+                    ytProcess.kill(
+                        "SIGKILL"
+                    );
+
+                } catch (error) {}
+
+
+                try {
+
+                    ffmpegProcess.kill(
+                        "SIGKILL"
+                    );
+
+                } catch (error) {}
+
+
+                reject(
+                    new Error(
+                        "FFmpeg could not create an audio stream."
+                    )
+                );
+
+                return;
+
+            }
+
+
+            // =================================================
+            // CURRENT PROCESS
+            // =================================================
+
+            const processController = {
+
+                ytProcess:
+                    ytProcess,
+
+                ffmpegProcess:
+                    ffmpegProcess,
+
+                kill:
+                    function () {
+
+                        try {
+
+                            ytProcess.kill(
+                                "SIGKILL"
+                            );
+
+                        } catch (error) {}
+
+
+                        try {
+
+                            ffmpegProcess.kill(
+                                "SIGKILL"
+                            );
+
+                        } catch (error) {}
+
+                    }
+
+            };
+
+
+            music.currentProcess =
+                processController;
+
+
+            // =================================================
+            // VARIABLES
+            // =================================================
 
             let stderr = "";
 
+            let ffmpegStderr = "";
+
             let settled = false;
 
-            let receivedAudioData = false;
+            let receivedYtAudio =
+                false;
+
+            let receivedPcm =
+                false;
 
 
             // =================================================
-            // AUDIO DATA
+            // SAFE ERROR HANDLERS
+            //
+            // Prevent EPIPE / broken pipe errors from
+            // becoming unhandled Node.js errors.
             // =================================================
 
-            audioProcess.stdout.once(
+            ytProcess.stdout.on(
+                "error",
+                function (error) {
+
+                    console.log(
+                        "yt-dlp stdout closed:",
+                        error.message
+                    );
+
+                }
+            );
+
+
+            ffmpegProcess.stdin.on(
+                "error",
+                function (error) {
+
+                    console.log(
+                        "FFmpeg stdin closed:",
+                        error.message
+                    );
+
+                }
+            );
+
+
+            ffmpegProcess.stdout.on(
+                "error",
+                function (error) {
+
+                    console.log(
+                        "FFmpeg stdout closed:",
+                        error.message
+                    );
+
+                }
+            );
+
+
+            // =================================================
+            // PIPE YT-DLP → FFMPEG
+            // =================================================
+
+            ytProcess.stdout.pipe(
+                ffmpegProcess.stdin
+            );
+
+
+            // =================================================
+            // YT-DLP STDERR
+            // =================================================
+
+            ytProcess.stderr.on(
+                "data",
+                function (data) {
+
+                    const text =
+                        data.toString();
+
+
+                    stderr += text;
+
+
+                    if (
+                        text.includes("ERROR") ||
+                        text.includes("WARNING")
+                    ) {
+
+                        console.error(
+                            text.trim()
+                        );
+
+                    }
+
+                }
+            );
+
+
+            // =================================================
+            // FFMPEG STDERR
+            // =================================================
+
+            ffmpegProcess.stderr.on(
+                "data",
+                function (data) {
+
+                    const text =
+                        data.toString();
+
+
+                    ffmpegStderr += text;
+
+
+                    console.error(
+                        "FFmpeg:",
+                        text.trim()
+                    );
+
+                }
+            );
+
+
+            // =================================================
+            // FFMPEG AUDIO DATA
+            // =================================================
+
+            ffmpegProcess.stdout.once(
                 "data",
                 function (chunk) {
 
@@ -719,12 +1002,12 @@ function getAudioStream(
                     }
 
 
-                    receivedAudioData =
+                    receivedPcm =
                         true;
 
 
                     console.log(
-                        "yt-dlp started sending audio data in guild " +
+                        "FFmpeg started sending PCM audio in guild " +
                         guildId
                     );
 
@@ -734,13 +1017,7 @@ function getAudioStream(
                         music.playbackId
                     ) {
 
-                        try {
-
-                            audioProcess.kill(
-                                "SIGKILL"
-                            );
-
-                        } catch (error) {}
+                        processController.kill();
 
 
                         if (!settled) {
@@ -770,10 +1047,10 @@ function getAudioStream(
                         resolve({
 
                             process:
-                                audioProcess,
+                                processController,
 
                             stream:
-                                audioProcess.stdout
+                                ffmpegProcess.stdout
 
                         });
 
@@ -784,40 +1061,10 @@ function getAudioStream(
 
 
             // =================================================
-            // STDERR
+            // YT-DLP PROCESS ERROR
             // =================================================
 
-            audioProcess.stderr.on(
-                "data",
-                function (data) {
-
-                    const text =
-                        data.toString();
-
-
-                    stderr += text;
-
-
-                    if (
-                        text.includes("ERROR") ||
-                        text.includes("WARNING")
-                    ) {
-
-                        console.error(
-                            text.trim()
-                        );
-
-                    }
-
-                }
-            );
-
-
-            // =================================================
-            // PROCESS ERROR
-            // =================================================
-
-            audioProcess.on(
+            ytProcess.on(
                 "error",
                 function (error) {
 
@@ -829,7 +1076,7 @@ function getAudioStream(
 
                     if (
                         music.currentProcess ===
-                        audioProcess
+                        processController
                     ) {
 
                         music.currentProcess =
@@ -855,22 +1102,62 @@ function getAudioStream(
 
 
             // =================================================
-            // PROCESS CLOSE
+            // FFMPEG PROCESS ERROR
             // =================================================
 
-            audioProcess.on(
-                "close",
-                function (code) {
+            ffmpegProcess.on(
+                "error",
+                function (error) {
+
+                    console.error(
+                        "FFmpeg process error:",
+                        error.message
+                    );
+
 
                     if (
                         music.currentProcess ===
-                        audioProcess
+                        processController
                     ) {
 
                         music.currentProcess =
                             null;
 
                     }
+
+
+                    if (settled) {
+
+                        return;
+
+                    }
+
+
+                    settled = true;
+
+
+                    reject(
+                        new Error(
+                            "FFmpeg failed: " +
+                            error.message
+                        )
+                    );
+
+                }
+            );
+
+
+            // =================================================
+            // YT-DLP CLOSE
+            // =================================================
+
+            ytProcess.on(
+                "close",
+                function (code) {
+
+                    receivedYtAudio =
+                        receivedYtAudio ||
+                        receivedPcm;
 
 
                     console.log(
@@ -882,130 +1169,225 @@ function getAudioStream(
 
 
                     console.log(
-                        "yt-dlp received audio data:",
-                        receivedAudioData
+                        "yt-dlp produced audio:",
+                        receivedYtAudio
+                    );
+
+
+                    // Do not immediately reject if FFmpeg
+                    // is still processing buffered data.
+                    if (
+                        !receivedPcm &&
+                        !settled &&
+                        thisPlayback ===
+                        music.playbackId
+                    ) {
+
+                        // Give FFmpeg a moment to report
+                        // an actual error/output.
+                        setTimeout(
+                            function () {
+
+                                if (
+                                    settled ||
+                                    receivedPcm
+                                ) {
+
+                                    return;
+
+                                }
+
+
+                                if (
+                                    thisPlayback !==
+                                    music.playbackId
+                                ) {
+
+                                    return;
+
+                                }
+
+
+                                settled = true;
+
+
+                                if (
+                                    stderr.includes(
+                                        "Sign in to confirm"
+                                    ) ||
+                                    stderr.includes(
+                                        "not a bot"
+                                    )
+                                ) {
+
+                                    reject(
+                                        new Error(
+                                            "YouTube blocked playback from the Railway server."
+                                        )
+                                    );
+
+                                    return;
+
+                                }
+
+
+                                if (
+                                    stderr.includes(
+                                        "The page needs to be reloaded"
+                                    )
+                                ) {
+
+                                    reject(
+                                        new Error(
+                                            "YouTube rejected the current client. yt-dlp/EJS or the JavaScript runtime needs updating."
+                                        )
+                                    );
+
+                                    return;
+
+                                }
+
+
+                                if (
+                                    stderr.includes(
+                                        "Requested format is not available"
+                                    )
+                                ) {
+
+                                    reject(
+                                        new Error(
+                                            "YouTube did not provide a usable audio format."
+                                        )
+                                    );
+
+                                    return;
+
+                                }
+
+
+                                if (
+                                    stderr.includes(
+                                        "PO Token"
+                                    )
+                                ) {
+
+                                    reject(
+                                        new Error(
+                                            "YouTube requires a PO Token for this video."
+                                        )
+                                    );
+
+                                    return;
+
+                                }
+
+
+                                if (
+                                    stderr.includes(
+                                        "No supported JavaScript runtime"
+                                    )
+                                ) {
+
+                                    reject(
+                                        new Error(
+                                            "yt-dlp cannot find a supported JavaScript runtime."
+                                        )
+                                    );
+
+                                    return;
+
+                                }
+
+
+                                if (ffmpegStderr.trim()) {
+
+                                    reject(
+                                        new Error(
+                                            "FFmpeg could not process the audio: " +
+                                            ffmpegStderr.trim()
+                                        )
+                                    );
+
+                                    return;
+
+                                }
+
+
+                                reject(
+                                    new Error(
+                                        "yt-dlp exited with code " +
+                                        code +
+                                        " before producing audio."
+                                    )
+                                );
+
+                            },
+                            1000
+                        );
+
+                    }
+
+                }
+            );
+
+
+            // =================================================
+            // FFMPEG CLOSE
+            // =================================================
+
+            ffmpegProcess.on(
+                "close",
+                function (code) {
+
+                    console.log(
+                        "FFmpeg process closed with code " +
+                        code +
+                        " in guild " +
+                        guildId
                     );
 
 
                     if (
-                        thisPlayback !==
-                        music.playbackId
+                        music.currentProcess ===
+                        processController
                     ) {
 
-                        return;
+                        music.currentProcess =
+                            null;
 
                     }
 
 
-                    // =================================================
-                    // FAILED BEFORE AUDIO STARTED
-                    // =================================================
-
                     if (
-                        !receivedAudioData &&
-                        !settled
+                        !receivedPcm &&
+                        !settled &&
+                        thisPlayback ===
+                        music.playbackId
                     ) {
 
                         settled = true;
 
 
-                        if (
-                            stderr.includes(
-                                "Sign in to confirm"
-                            ) ||
-                            stderr.includes(
-                                "not a bot"
-                            )
-                        ) {
+                        if (ffmpegStderr.trim()) {
 
                             reject(
                                 new Error(
-                                    "YouTube blocked playback from the Railway server."
+                                    "FFmpeg could not process the audio: " +
+                                    ffmpegStderr.trim()
                                 )
                             );
 
-                            return;
-
-                        }
-
-
-                        if (
-                            stderr.includes(
-                                "The page needs to be reloaded"
-                            )
-                        ) {
+                        } else {
 
                             reject(
                                 new Error(
-                                    "YouTube rejected the current client. yt-dlp/EJS or the JavaScript runtime needs updating."
+                                    "FFmpeg exited with code " +
+                                    code +
+                                    " before producing audio."
                                 )
                             );
 
-                            return;
-
                         }
-
-
-                        if (
-                            stderr.includes(
-                                "Requested format is not available"
-                            )
-                        ) {
-
-                            reject(
-                                new Error(
-                                    "YouTube did not provide a usable audio format."
-                                )
-                            );
-
-                            return;
-
-                        }
-
-
-                        if (
-                            stderr.includes(
-                                "PO Token"
-                            )
-                        ) {
-
-                            reject(
-                                new Error(
-                                    "YouTube requires a PO Token for this video."
-                                )
-                            );
-
-                            return;
-
-                        }
-
-
-                        if (
-                            stderr.includes(
-                                "No supported JavaScript runtime"
-                            )
-                        ) {
-
-                            reject(
-                                new Error(
-                                    "yt-dlp cannot find a supported JavaScript runtime."
-                                )
-                            );
-
-                            return;
-
-                        }
-
-
-                        reject(
-                            new Error(
-                                "yt-dlp exited with code " +
-                                code +
-                                " before producing audio."
-                            )
-                        );
-
-                        return;
 
                     }
 
@@ -1493,9 +1875,7 @@ client.on(
 
                     try {
 
-                        audio.process.kill(
-                            "SIGKILL"
-                        );
+                        audio.process.kill();
 
                     } catch (error) {}
 
@@ -1506,7 +1886,7 @@ client.on(
 
 
                 // -------------------------------------------------
-                // CREATE AUDIO RESOURCE
+                // CREATE RAW PCM AUDIO RESOURCE
                 // -------------------------------------------------
 
                 let resource;
@@ -1516,16 +1896,21 @@ client.on(
 
                     resource =
                         createAudioResource(
-                            audio.stream
+                            audio.stream,
+                            {
+                                inputType:
+                                    StreamType.Raw,
+
+                                inlineVolume:
+                                    false
+                            }
                         );
 
                 } catch (error) {
 
                     try {
 
-                        audio.process.kill(
-                            "SIGKILL"
-                        );
+                        audio.process.kill();
 
                     } catch (err) {}
 
@@ -1546,9 +1931,7 @@ client.on(
 
                     try {
 
-                        audio.process.kill(
-                            "SIGKILL"
-                        );
+                        audio.process.kill();
 
                     } catch (error) {}
 
