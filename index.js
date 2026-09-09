@@ -1,3 +1,4 @@
+```js
 require("dotenv").config();
 
 const fs = require("fs");
@@ -148,6 +149,83 @@ function setupYouTubeCookies() {
         return null;
 
     }
+
+}
+
+
+// =========================================================
+// YT-DLP COMMON ARGUMENTS
+// =========================================================
+
+function getYtDlpCommonArgs() {
+
+    const args = [
+
+        "--no-warnings",
+
+        "--no-progress",
+
+        "--no-playlist",
+
+        "--extractor-args",
+        "youtube:player_client=default,-tv_downgraded,web_embedded"
+
+    ];
+
+
+    /*
+     * yt-dlp now needs a JavaScript runtime for
+     * full YouTube extraction.
+     *
+     * Railway's Node runtime is used if it is
+     * new enough.
+     */
+
+    const nodeMajor =
+        parseInt(
+            process.versions.node.split(".")[0],
+            10
+        );
+
+
+    if (!isNaN(nodeMajor) && nodeMajor >= 22) {
+
+        args.push(
+            "--js-runtimes",
+            "node"
+        );
+
+        /*
+         * Allows yt-dlp to retrieve the current
+         * EJS challenge scripts if needed.
+         */
+
+        args.push(
+            "--remote-components",
+            "ejs:github"
+        );
+
+        console.log(
+            "yt-dlp JavaScript runtime: Node " +
+            process.versions.node
+        );
+
+    } else {
+
+        console.log(
+            "Warning: Node " +
+            process.versions.node +
+            " is below Node 22."
+        );
+
+        console.log(
+            "YouTube extraction may require Deno or a newer Node runtime."
+        );
+
+    }
+
+
+    return args;
 
 }
 
@@ -356,6 +434,13 @@ async function setupYtDlp() {
             String(version).trim()
         );
 
+
+        console.log(
+            "Node.js version:",
+            process.versions.node
+        );
+
+
     } catch (error) {
 
         console.error(
@@ -389,21 +474,21 @@ async function searchYouTube(query) {
 
     try {
 
-        const searchArgs = [
+        const searchArgs =
+            getYtDlpCommonArgs();
+
+
+        searchArgs.push(
 
             "--dump-single-json",
 
             "--flat-playlist",
 
-            "--no-warnings",
-
-            "--no-playlist",
-
             "--skip-download",
 
             "ytsearch1:" + query
 
-        ];
+        );
 
 
         if (getYouTubeCookies()) {
@@ -520,30 +605,28 @@ function getAudioStream(
 
 
             // =================================================
-            // FLEXIBLE AUDIO FORMAT
+            // AUDIO ARGUMENTS
             // =================================================
 
-            let audioArgs = [
+            let audioArgs =
+                getYtDlpCommonArgs();
+
+
+            audioArgs.push(
 
                 "-f",
 
                 "bestaudio/best",
 
-                "--no-playlist",
-
-                "--no-warnings",
-
-                "--no-progress",
-
                 "-o",
 
                 "-"
 
-            ];
+            );
 
 
             // =================================================
-            // YOUTUBE COOKIES
+            // COOKIES
             // =================================================
 
             if (getYouTubeCookies()) {
@@ -622,7 +705,7 @@ function getAudioStream(
 
 
             // =================================================
-            // WAIT FOR ACTUAL AUDIO DATA
+            // AUDIO DATA
             // =================================================
 
             audioProcess.stdout.once(
@@ -817,10 +900,6 @@ function getAudioStream(
                     }
 
 
-                    // =================================================
-                    // FAILED BEFORE AUDIO STARTED
-                    // =================================================
-
                     if (
                         !receivedAudioData &&
                         !settled
@@ -841,6 +920,23 @@ function getAudioStream(
                             reject(
                                 new Error(
                                     "YouTube blocked playback from the Railway server."
+                                )
+                            );
+
+                            return;
+
+                        }
+
+
+                        if (
+                            stderr.includes(
+                                "The page needs to be reloaded"
+                            )
+                        ) {
+
+                            reject(
+                                new Error(
+                                    "YouTube rejected the current client. Make sure yt-dlp, EJS, and the JavaScript runtime are updated."
                                 )
                             );
 
@@ -883,6 +979,23 @@ function getAudioStream(
                         }
 
 
+                        if (
+                            stderr.includes(
+                                "No supported JavaScript runtime"
+                            )
+                        ) {
+
+                            reject(
+                                new Error(
+                                    "yt-dlp cannot find a supported JavaScript runtime."
+                                )
+                            );
+
+                            return;
+
+                        }
+
+
                         reject(
                             new Error(
                                 "yt-dlp exited with code " +
@@ -890,20 +1003,6 @@ function getAudioStream(
                                 " before producing audio."
                             )
                         );
-
-                        return;
-
-                    }
-
-
-                    // =================================================
-                    // NORMAL END
-                    // =================================================
-
-                    if (
-                        code === 0 &&
-                        receivedAudioData
-                    ) {
 
                         return;
 
@@ -1328,6 +1427,7 @@ client.on(
                             "I couldn't connect to the voice channel."
                         );
 
+
                         return;
 
                     }
@@ -1336,7 +1436,7 @@ client.on(
 
 
                 // -------------------------------------------------
-                // GET AUDIO
+                // AUDIO
                 // -------------------------------------------------
 
                 let audio;
@@ -1435,7 +1535,7 @@ client.on(
 
 
                 // -------------------------------------------------
-                // FINAL PLAYBACK CHECK
+                // FINAL CHECK
                 // -------------------------------------------------
 
                 if (
@@ -1693,3 +1793,4 @@ async function startBot() {
 
 
 startBot();
+```
