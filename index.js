@@ -38,67 +38,42 @@ const cookiesPath = path.join(
 );
 
 
-/*
-    Railway has a maximum environment-variable size.
+function getYouTubeCookieKeys() {
 
-    Therefore the cookies can be split into:
-
-    YOUTUBE_COOKIES_1
-    YOUTUBE_COOKIES_2
-    YOUTUBE_COOKIES_3
-    YOUTUBE_COOKIES_4
-    ...
-
-    The bot automatically combines them in numerical order.
-*/
-
-function getYouTubeCookies() {
-
-    const cookieKeys = Object.keys(process.env)
+    return Object.keys(process.env)
         .filter(function (key) {
-
             return /^YOUTUBE_COOKIES_\d+$/.test(key);
-
         })
         .sort(function (a, b) {
 
             const numberA =
-                parseInt(
-                    a.split("_").pop(),
-                    10
-                );
+                parseInt(a.split("_").pop(), 10);
 
             const numberB =
-                parseInt(
-                    b.split("_").pop(),
-                    10
-                );
+                parseInt(b.split("_").pop(), 10);
 
             return numberA - numberB;
 
         });
+}
 
 
-    // ---------------------------------------------------------
-    // New split-cookie system
-    // ---------------------------------------------------------
+function getYouTubeCookies() {
+
+    const cookieKeys =
+        getYouTubeCookieKeys();
+
 
     if (cookieKeys.length > 0) {
 
         return cookieKeys
             .map(function (key) {
-
-                return process.env[key];
-
+                return process.env[key] || "";
             })
             .join("");
 
     }
 
-
-    // ---------------------------------------------------------
-    // Old single-variable system
-    // ---------------------------------------------------------
 
     return process.env.YOUTUBE_COOKIES || "";
 }
@@ -108,6 +83,10 @@ function setupYouTubeCookies() {
 
     const cookies =
         getYouTubeCookies();
+
+
+    const cookieKeys =
+        getYouTubeCookieKeys();
 
 
     if (!cookies) {
@@ -132,21 +111,11 @@ function setupYouTubeCookies() {
         );
 
 
-        const cookieVariableCount =
-            Object.keys(process.env)
-                .filter(function (key) {
-
-                    return /^YOUTUBE_COOKIES_\d+$/.test(key);
-
-                })
-                .length;
-
-
-        if (cookieVariableCount > 0) {
+        if (cookieKeys.length > 0) {
 
             console.log(
                 "YouTube cookies loaded from " +
-                cookieVariableCount +
+                cookieKeys.length +
                 " variable(s)."
             );
 
@@ -157,6 +126,12 @@ function setupYouTubeCookies() {
             );
 
         }
+
+
+        console.log(
+            "YouTube cookie data length:",
+            cookies.length
+        );
 
 
         return cookiesPath;
@@ -530,11 +505,17 @@ function getAudioStream(
             );
 
 
+            // =================================================
+            // IMPORTANT:
+            // Use a flexible format instead of requiring
+            // Opus/WebM specifically.
+            // =================================================
+
             let audioArgs = [
 
                 "-f",
 
-                "bestaudio[acodec=opus][ext=webm]/bestaudio[acodec=opus]/bestaudio",
+                "bestaudio/best",
 
                 "--no-playlist",
 
@@ -621,11 +602,33 @@ function getAudioStream(
 
             let stderr = "";
             let settled = false;
+            let receivedAudioData = false;
 
 
-            // -------------------------------------------------
+            // =================================================
+            // STDOUT
+            // =================================================
+
+            audioProcess.stdout.on(
+                "data",
+                function (chunk) {
+
+                    if (
+                        chunk &&
+                        chunk.length > 0
+                    ) {
+
+                        receivedAudioData = true;
+
+                    }
+
+                }
+            );
+
+
+            // =================================================
             // STDERR
-            // -------------------------------------------------
+            // =================================================
 
             audioProcess.stderr.on(
                 "data",
@@ -653,9 +656,9 @@ function getAudioStream(
             );
 
 
-            // -------------------------------------------------
+            // =================================================
             // PROCESS ERROR
-            // -------------------------------------------------
+            // =================================================
 
             audioProcess.on(
                 "error",
@@ -692,9 +695,9 @@ function getAudioStream(
             );
 
 
-            // -------------------------------------------------
+            // =================================================
             // PROCESS CLOSE
-            // -------------------------------------------------
+            // =================================================
 
             audioProcess.on(
                 "close",
@@ -715,6 +718,12 @@ function getAudioStream(
                         code +
                         " in guild " +
                         guildId
+                    );
+
+
+                    console.log(
+                        "yt-dlp received audio data:",
+                        receivedAudioData
                     );
 
 
@@ -757,6 +766,22 @@ function getAudioStream(
                         }
 
 
+                        if (
+                            stderr.includes(
+                                "Requested format is not available"
+                            )
+                        ) {
+
+                            reject(
+                                new Error(
+                                    "YouTube did not provide a usable audio format."
+                                )
+                            );
+
+                            return;
+                        }
+
+
                         reject(
                             new Error(
                                 "yt-dlp exited with code " +
@@ -771,9 +796,9 @@ function getAudioStream(
             );
 
 
-            // -------------------------------------------------
+            // =================================================
             // RETURN STREAM
-            // -------------------------------------------------
+            // =================================================
 
             resolve({
 
@@ -868,8 +893,6 @@ client.on(
         const lowerCommand =
             command.toLowerCase();
 
-
-        // Commands only work inside servers.
 
         if (!message.guild) {
 
@@ -1055,8 +1078,6 @@ client.on(
             }
 
 
-            // New playback ID for this server only.
-
             music.playbackId++;
 
 
@@ -1073,8 +1094,6 @@ client.on(
                 query
             );
 
-
-            // Stop only this server's song.
 
             stopCurrentAudio(
                 guildId
@@ -1243,7 +1262,7 @@ client.on(
 
 
                 // -------------------------------------------------
-                // CHECK PLAYBACK
+                // PLAYBACK CHECK
                 // -------------------------------------------------
 
                 if (
@@ -1273,13 +1292,16 @@ client.on(
 
                 try {
 
+                    /*
+                        We no longer force WebmOpus.
+
+                        yt-dlp may return a different audio
+                        container/codec depending on YouTube.
+                    */
+
                     resource =
                         createAudioResource(
-                            audio.stream,
-                            {
-                                inputType:
-                                    StreamType.WebmOpus
-                            }
+                            audio.stream
                         );
 
                 } catch (error) {
