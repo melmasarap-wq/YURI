@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const fs = require("fs");
 const path = require("path");
+
 const {
     Client,
     GatewayIntentBits,
@@ -26,6 +27,7 @@ const ytDlpPath = process.env.YTDLP_PATH || "yt-dlp";
 
 let ytDlp = null;
 
+
 // =========================================================
 // YOUTUBE COOKIES
 // =========================================================
@@ -35,17 +37,91 @@ const cookiesPath = path.join(
     "youtube-cookies.txt"
 );
 
+
+/*
+    Railway has a maximum environment-variable size.
+
+    Therefore the cookies can be split into:
+
+    YOUTUBE_COOKIES_1
+    YOUTUBE_COOKIES_2
+    YOUTUBE_COOKIES_3
+    YOUTUBE_COOKIES_4
+    ...
+
+    The bot automatically combines them in numerical order.
+*/
+
+function getYouTubeCookies() {
+
+    const cookieKeys = Object.keys(process.env)
+        .filter(function (key) {
+
+            return /^YOUTUBE_COOKIES_\d+$/.test(key);
+
+        })
+        .sort(function (a, b) {
+
+            const numberA =
+                parseInt(
+                    a.split("_").pop(),
+                    10
+                );
+
+            const numberB =
+                parseInt(
+                    b.split("_").pop(),
+                    10
+                );
+
+            return numberA - numberB;
+
+        });
+
+
+    // ---------------------------------------------------------
+    // New split-cookie system
+    // ---------------------------------------------------------
+
+    if (cookieKeys.length > 0) {
+
+        return cookieKeys
+            .map(function (key) {
+
+                return process.env[key];
+
+            })
+            .join("");
+
+    }
+
+
+    // ---------------------------------------------------------
+    // Old single-variable system
+    // ---------------------------------------------------------
+
+    return process.env.YOUTUBE_COOKIES || "";
+}
+
+
 function setupYouTubeCookies() {
-    const cookies = process.env.YOUTUBE_COOKIES;
+
+    const cookies =
+        getYouTubeCookies();
+
 
     if (!cookies) {
+
         console.log(
-            "No YOUTUBE_COOKIES found. Continuing without cookies."
+            "No YouTube cookies found. Continuing without cookies."
         );
+
         return null;
     }
 
+
     try {
+
         fs.writeFileSync(
             cookiesPath,
             cookies,
@@ -55,7 +131,33 @@ function setupYouTubeCookies() {
             }
         );
 
-        console.log("YouTube cookies loaded.");
+
+        const cookieVariableCount =
+            Object.keys(process.env)
+                .filter(function (key) {
+
+                    return /^YOUTUBE_COOKIES_\d+$/.test(key);
+
+                })
+                .length;
+
+
+        if (cookieVariableCount > 0) {
+
+            console.log(
+                "YouTube cookies loaded from " +
+                cookieVariableCount +
+                " variable(s)."
+            );
+
+        } else {
+
+            console.log(
+                "YouTube cookies loaded."
+            );
+
+        }
+
 
         return cookiesPath;
 
@@ -77,11 +179,14 @@ function setupYouTubeCookies() {
 
 const guildMusic = new Map();
 
+
 function getGuildMusic(guildId) {
 
     if (!guildMusic.has(guildId)) {
 
-        const player = createAudioPlayer();
+        const player =
+            createAudioPlayer();
+
 
         player.on(
             AudioPlayerStatus.Playing,
@@ -95,6 +200,7 @@ function getGuildMusic(guildId) {
             }
         );
 
+
         player.on(
             AudioPlayerStatus.Idle,
             function () {
@@ -106,6 +212,7 @@ function getGuildMusic(guildId) {
 
             }
         );
+
 
         player.on(
             "error",
@@ -121,6 +228,7 @@ function getGuildMusic(guildId) {
             }
         );
 
+
         guildMusic.set(
             guildId,
             {
@@ -130,7 +238,9 @@ function getGuildMusic(guildId) {
                 playbackId: 0
             }
         );
+
     }
+
 
     return guildMusic.get(guildId);
 }
@@ -142,33 +252,39 @@ function getGuildMusic(guildId) {
 
 if (!process.env.TOKEN) {
 
-    console.error("TOKEN is missing!");
+    console.error(
+        "TOKEN is missing!"
+    );
 
     process.exit(1);
 }
 
-console.log("TOKEN found.");
+
+console.log(
+    "TOKEN found."
+);
 
 
 // =========================================================
 // DISCORD CLIENT
 // =========================================================
 
-const client = new Client({
+const client =
+    new Client({
 
-    intents: [
+        intents: [
 
-        GatewayIntentBits.Guilds,
+            GatewayIntentBits.Guilds,
 
-        GatewayIntentBits.GuildMessages,
+            GatewayIntentBits.GuildMessages,
 
-        GatewayIntentBits.MessageContent,
+            GatewayIntentBits.MessageContent,
 
-        GatewayIntentBits.GuildVoiceStates
+            GatewayIntentBits.GuildVoiceStates
 
-    ]
+        ]
 
-});
+    });
 
 
 // =========================================================
@@ -177,13 +293,16 @@ const client = new Client({
 
 function stopCurrentAudio(guildId) {
 
-    const music = getGuildMusic(guildId);
+    const music =
+        getGuildMusic(guildId);
+
 
     console.log(
         "Stopping current audio in guild " +
         guildId +
         "..."
     );
+
 
     if (music.currentProcess) {
 
@@ -201,8 +320,11 @@ function stopCurrentAudio(guildId) {
 
         }
 
-        music.currentProcess = null;
+
+        music.currentProcess =
+            null;
     }
+
 
     try {
 
@@ -228,11 +350,15 @@ async function setupYtDlp() {
         "Setting up yt-dlp..."
     );
 
+
     setupYouTubeCookies();
 
-    ytDlp = new YTDlpWrap(
-        ytDlpPath
-    );
+
+    ytDlp =
+        new YTDlpWrap(
+            ytDlpPath
+        );
+
 
     try {
 
@@ -240,6 +366,7 @@ async function setupYtDlp() {
             await ytDlp.execPromise([
                 "--version"
             ]);
+
 
         console.log(
             "yt-dlp is ready. Version:",
@@ -252,7 +379,9 @@ async function setupYtDlp() {
             "yt-dlp is not working."
         );
 
-        console.error(error);
+        console.error(
+            error
+        );
 
         process.exit(1);
     }
@@ -270,6 +399,7 @@ async function searchYouTube(query) {
         query
     );
 
+
     try {
 
         const searchArgs = [
@@ -285,15 +415,15 @@ async function searchYouTube(query) {
             "--skip-download",
 
             "--extractor-args",
+
             "youtube:player_client=android_vr,web_embedded",
 
             "ytsearch1:" + query
 
         ];
 
-        if (
-            process.env.YOUTUBE_COOKIES
-        ) {
+
+        if (getYouTubeCookies()) {
 
             searchArgs.push(
                 "--cookies",
@@ -302,15 +432,18 @@ async function searchYouTube(query) {
 
         }
 
+
         const output =
             await ytDlp.execPromise(
                 searchArgs
             );
 
+
         const data =
             JSON.parse(
                 String(output)
             );
+
 
         if (
             !data ||
@@ -321,13 +454,16 @@ async function searchYouTube(query) {
             return null;
         }
 
+
         const video =
             data.entries[0];
+
 
         if (!video.id) {
 
             return null;
         }
+
 
         return {
 
@@ -371,6 +507,7 @@ function getAudioStream(
             const music =
                 getGuildMusic(guildId);
 
+
             if (
                 thisPlayback !==
                 music.playbackId
@@ -385,11 +522,13 @@ function getAudioStream(
                 return;
             }
 
+
             console.log(
                 "Starting audio stream for guild " +
                 guildId +
                 "..."
             );
+
 
             let audioArgs = [
 
@@ -413,9 +552,8 @@ function getAudioStream(
 
             ];
 
-            if (
-                process.env.YOUTUBE_COOKIES
-            ) {
+
+            if (getYouTubeCookies()) {
 
                 audioArgs.push(
                     "--cookies",
@@ -424,23 +562,29 @@ function getAudioStream(
 
             }
 
-            audioArgs.push(url);
+
+            audioArgs.push(
+                url
+            );
+
 
             let audioProcess;
 
+
             try {
 
-                audioProcess = spawn(
-                    ytDlpPath,
-                    audioArgs,
-                    {
-                        stdio: [
-                            "ignore",
-                            "pipe",
-                            "pipe"
-                        ]
-                    }
-                );
+                audioProcess =
+                    spawn(
+                        ytDlpPath,
+                        audioArgs,
+                        {
+                            stdio: [
+                                "ignore",
+                                "pipe",
+                                "pipe"
+                            ]
+                        }
+                    );
 
             } catch (error) {
 
@@ -448,6 +592,7 @@ function getAudioStream(
 
                 return;
             }
+
 
             if (!audioProcess.stdout) {
 
@@ -459,6 +604,7 @@ function getAudioStream(
 
                 } catch (error) {}
 
+
                 reject(
                     new Error(
                         "yt-dlp could not create an audio stream."
@@ -468,11 +614,14 @@ function getAudioStream(
                 return;
             }
 
+
             music.currentProcess =
                 audioProcess;
 
+
             let stderr = "";
             let settled = false;
+
 
             // -------------------------------------------------
             // STDERR
@@ -485,7 +634,9 @@ function getAudioStream(
                     const text =
                         data.toString();
 
+
                     stderr += text;
+
 
                     if (
                         text.includes("ERROR") ||
@@ -501,6 +652,7 @@ function getAudioStream(
                 }
             );
 
+
             // -------------------------------------------------
             // PROCESS ERROR
             // -------------------------------------------------
@@ -514,6 +666,7 @@ function getAudioStream(
                         error.message
                     );
 
+
                     if (
                         music.currentProcess ===
                         audioProcess
@@ -523,16 +676,21 @@ function getAudioStream(
                             null;
                     }
 
+
                     if (settled) {
+
                         return;
                     }
 
+
                     settled = true;
+
 
                     reject(error);
 
                 }
             );
+
 
             // -------------------------------------------------
             // PROCESS CLOSE
@@ -551,12 +709,14 @@ function getAudioStream(
                             null;
                     }
 
+
                     console.log(
                         "yt-dlp process closed with code " +
                         code +
                         " in guild " +
                         guildId
                     );
+
 
                     if (
                         thisPlayback !==
@@ -566,12 +726,14 @@ function getAudioStream(
                         return;
                     }
 
+
                     if (
                         code !== 0 &&
                         !settled
                     ) {
 
                         settled = true;
+
 
                         if (
                             stderr.includes(
@@ -594,6 +756,7 @@ function getAudioStream(
                             return;
                         }
 
+
                         reject(
                             new Error(
                                 "yt-dlp exited with code " +
@@ -606,6 +769,7 @@ function getAudioStream(
 
                 }
             );
+
 
             // -------------------------------------------------
             // RETURN STREAM
@@ -640,9 +804,11 @@ client.once(
             "!"
         );
 
+
         console.log(
             "Bot is ready."
         );
+
 
         client.user.setActivity(
             "!help",
@@ -667,16 +833,20 @@ client.on(
         if (
             message.author.bot
         ) {
+
             return;
         }
+
 
         if (
             !message.content.startsWith(
                 PREFIX
             )
         ) {
+
             return;
         }
+
 
         const args =
             message.content
@@ -684,24 +854,32 @@ client.on(
                 .trim()
                 .split(/\s+/);
 
+
         const command =
             args.shift();
 
+
         if (!command) {
+
             return;
         }
+
 
         const lowerCommand =
             command.toLowerCase();
 
+
         // Commands only work inside servers.
 
         if (!message.guild) {
+
             return;
         }
 
+
         const guildId =
             message.guild.id;
+
 
         const music =
             getGuildMusic(guildId);
@@ -754,6 +932,7 @@ client.on(
                 message.member.voice &&
                 message.member.voice.channel;
 
+
             if (!voiceChannel) {
 
                 await message.reply(
@@ -762,6 +941,7 @@ client.on(
 
                 return;
             }
+
 
             try {
 
@@ -776,6 +956,7 @@ client.on(
                     } catch (error) {}
 
                 }
+
 
                 const connection =
                     joinVoiceChannel({
@@ -795,18 +976,22 @@ client.on(
 
                     });
 
+
                 await entersState(
                     connection,
                     VoiceConnectionStatus.Ready,
                     30000
                 );
 
+
                 connection.subscribe(
                     music.player
                 );
 
+
                 music.connection =
                     connection;
+
 
                 await message.reply(
                     "Joined " +
@@ -820,6 +1005,7 @@ client.on(
                     "Join error:",
                     error
                 );
+
 
                 await message.reply(
                     "I couldn't join the voice channel."
@@ -842,6 +1028,7 @@ client.on(
             const query =
                 args.join(" ");
 
+
             if (!query) {
 
                 await message.reply(
@@ -851,10 +1038,12 @@ client.on(
                 return;
             }
 
+
             const voiceChannel =
                 message.member &&
                 message.member.voice &&
                 message.member.voice.channel;
+
 
             if (!voiceChannel) {
 
@@ -865,12 +1054,15 @@ client.on(
                 return;
             }
 
+
             // New playback ID for this server only.
 
             music.playbackId++;
 
+
             const thisPlayback =
                 music.playbackId;
+
 
             console.log(
                 "New playback request #" +
@@ -881,14 +1073,17 @@ client.on(
                 query
             );
 
+
             // Stop only this server's song.
 
             stopCurrentAudio(
                 guildId
             );
 
+
             let searchingMessage =
                 null;
+
 
             try {
 
@@ -909,12 +1104,15 @@ client.on(
                         query
                     );
 
+
                 if (
                     thisPlayback !==
                     music.playbackId
                 ) {
+
                     return;
                 }
+
 
                 if (!video) {
 
@@ -924,6 +1122,7 @@ client.on(
 
                     return;
                 }
+
 
                 console.log(
                     "Found: " +
@@ -961,11 +1160,13 @@ client.on(
 
                             });
 
+
                         await entersState(
                             music.connection,
                             VoiceConnectionStatus.Ready,
                             30000
                         );
+
 
                         music.connection.subscribe(
                             music.player
@@ -977,13 +1178,16 @@ client.on(
                             thisPlayback !==
                             music.playbackId
                         ) {
+
                             return;
                         }
+
 
                         console.error(
                             "Voice connection error:",
                             error
                         );
+
 
                         await searchingMessage.edit(
                             "I couldn't connect to the voice channel."
@@ -1000,6 +1204,7 @@ client.on(
 
                 let audio;
 
+
                 try {
 
                     audio =
@@ -1015,19 +1220,23 @@ client.on(
                         thisPlayback !==
                         music.playbackId
                     ) {
+
                         return;
                     }
+
 
                     console.error(
                         "Audio error:",
                         error.message
                     );
 
+
                     await searchingMessage.edit(
                         "I couldn't play this song.\n\n" +
                         "Reason: " +
                         error.message
                     );
+
 
                     return;
                 }
@@ -1050,6 +1259,7 @@ client.on(
 
                     } catch (error) {}
 
+
                     return;
                 }
 
@@ -1059,6 +1269,7 @@ client.on(
                 // -------------------------------------------------
 
                 let resource;
+
 
                 try {
 
@@ -1081,6 +1292,7 @@ client.on(
 
                     } catch (err) {}
 
+
                     throw error;
                 }
 
@@ -1102,6 +1314,7 @@ client.on(
 
                     } catch (error) {}
 
+
                     return;
                 }
 
@@ -1114,10 +1327,12 @@ client.on(
                     resource
                 );
 
+
                 await searchingMessage.edit(
                     "Now playing: " +
                     video.title
                 );
+
 
                 console.log(
                     "Playing playback #" +
@@ -1134,13 +1349,16 @@ client.on(
                     thisPlayback !==
                     music.playbackId
                 ) {
+
                     return;
                 }
+
 
                 console.error(
                     "Play command error:",
                     error
                 );
+
 
                 try {
 
@@ -1185,13 +1403,16 @@ client.on(
 
             music.playbackId++;
 
+
             stopCurrentAudio(
                 guildId
             );
 
+
             await message.reply(
                 "Stopped the music."
             );
+
 
             return;
         }
@@ -1207,9 +1428,11 @@ client.on(
 
             music.playbackId++;
 
+
             stopCurrentAudio(
                 guildId
             );
+
 
             if (
                 music.connection
@@ -1228,13 +1451,16 @@ client.on(
 
                 }
 
+
                 music.connection =
                     null;
             }
 
+
             await message.reply(
                 "Left the voice channel."
             );
+
 
             return;
         }
@@ -1251,18 +1477,29 @@ client.on(
             await message.reply(
 
                 [
+
                     "YURI BOT COMMANDS",
+
                     "",
+
                     "!play <song> - Play a song",
+
                     "!stop - Stop music",
+
                     "!join - Join your voice channel",
+
                     "!leave - Leave voice channel",
+
                     "!ping - Check bot latency",
+
                     "!hello - Say hello",
+
                     "!help - Show commands"
+
                 ].join("\n")
 
             );
+
 
             return;
         }
@@ -1281,13 +1518,16 @@ async function startBot() {
 
         await setupYtDlp();
 
+
         console.log(
             "Logging into Discord..."
         );
 
+
         await client.login(
             process.env.TOKEN
         );
+
 
         console.log(
             "Discord login successful."
@@ -1300,8 +1540,10 @@ async function startBot() {
             error
         );
 
+
         process.exit(1);
     }
 }
+
 
 startBot();
