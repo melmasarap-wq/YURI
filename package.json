@@ -7,6 +7,9 @@
     "start": "node index.js"
   },
   "type": "commonjs",
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
     "discord.js": "^14.27.0",
