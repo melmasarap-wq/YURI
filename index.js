@@ -1,4 +1,3 @@
-```js
 require("dotenv").config();
 
 const fs = require("fs");
@@ -174,11 +173,8 @@ function getYtDlpCommonArgs() {
 
 
     /*
-     * yt-dlp now needs a JavaScript runtime for
-     * full YouTube extraction.
-     *
-     * Railway's Node runtime is used if it is
-     * new enough.
+     * Use Node as yt-dlp's JavaScript runtime
+     * when Node 22 or newer is available.
      */
 
     const nodeMajor =
@@ -188,22 +184,22 @@ function getYtDlpCommonArgs() {
         );
 
 
-    if (!isNaN(nodeMajor) && nodeMajor >= 22) {
+    if (
+        !isNaN(nodeMajor) &&
+        nodeMajor >= 22
+    ) {
 
         args.push(
             "--js-runtimes",
             "node"
         );
 
-        /*
-         * Allows yt-dlp to retrieve the current
-         * EJS challenge scripts if needed.
-         */
 
         args.push(
             "--remote-components",
             "ejs:github"
         );
+
 
         console.log(
             "yt-dlp JavaScript runtime: Node " +
@@ -218,8 +214,9 @@ function getYtDlpCommonArgs() {
             " is below Node 22."
         );
 
+
         console.log(
-            "YouTube extraction may require Deno or a newer Node runtime."
+            "YouTube extraction may require Deno or Node 22+."
         );
 
     }
@@ -900,6 +897,10 @@ function getAudioStream(
                     }
 
 
+                    // =================================================
+                    // FAILED BEFORE AUDIO STARTED
+                    // =================================================
+
                     if (
                         !receivedAudioData &&
                         !settled
@@ -936,7 +937,7 @@ function getAudioStream(
 
                             reject(
                                 new Error(
-                                    "YouTube rejected the current client. Make sure yt-dlp, EJS, and the JavaScript runtime are updated."
+                                    "YouTube rejected the current client. yt-dlp/EJS or the JavaScript runtime needs updating."
                                 )
                             );
 
@@ -1793,4 +1794,3 @@ async function startBot() {
 
 
 startBot();
-```
