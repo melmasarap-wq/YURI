@@ -1,9 +1,4 @@
-FROM node:20
-
-RUN apt-get update && \
-    apt-get install -y python3 python3-pip ffmpeg && \
-    pip3 install --break-system-packages yt-dlp && \
-    rm -rf /var/lib/apt/lists/*
+FROM node:22-bookworm
 
 WORKDIR /app
 
@@ -13,4 +8,12 @@ RUN npm install
 
 COPY . .
 
-CMD ["npm", "start"]
+RUN apt-get update \
+    && apt-get install -y python3 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp
+
+CMD ["node", "index.js"]
