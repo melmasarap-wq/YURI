@@ -1816,7 +1816,7 @@ client.on(
         ) {
 
             await message.reply(
-                "Pong! " +
+                "" +
                 client.ws.ping +
                 "ms"
             );
