@@ -1801,7 +1801,7 @@ client.on(
         ) {
 
             await message.reply(
-                "Hello! I'm YURI BOT!"
+                "ano na naman kailangan mo?"
             );
 
             return;
